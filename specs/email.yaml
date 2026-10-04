@@ -1,0 +1,51 @@
+project_name: LMS Email Notification
+version: "1.0"
+
+functions:
+  - name: EmailNotification
+    description: Email notification delivery
+
+    parameters:
+      - name: max_retry
+        type: integer
+        default: 2
+        description: Maximum retry count
+
+    states:
+      - name: IDLE
+        description: Notification has not started
+
+      - name: QUEUED
+        description: Notification is waiting to be sent
+
+      - name: SENT
+        description: Notification was sent successfully
+
+      - name: FAILED
+        description: Notification delivery failed
+
+    transitions:
+      - source: IDLE
+        target: QUEUED
+        event: enqueue
+
+      - source: QUEUED
+        target: SENT
+        event: send_success
+
+      - source: QUEUED
+        target: FAILED
+        event: send_failure
+
+      - source: FAILED
+        target: QUEUED
+        event: retry
+
+    constraints:
+      - name: retry_limit
+        expression: retry_count <= max_retry
+        description: Retry count cannot exceed maximum
+
+      - name: recipient
+        expression: valid_recipient == true
+        description: Recipient must be valid
