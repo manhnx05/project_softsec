@@ -1,0 +1,60 @@
+{
+    "project": "LMS End-to-End Software Security",
+  
+    "pipeline": [
+      "function",
+      "parameters",
+      "states",
+      "constraints",
+      "kripke",
+      "code_generation",
+      "static_testing",
+      "dynamic_testing"
+    ],
+  
+    "authentication": {
+      "function": "Xác thực đăng nhập",
+  
+      "parameters": {
+        "max_attempts": 3,
+        "session_ttl_seconds": 3600,
+        "min_password_length": 8
+      },
+  
+      "states": [
+        "LOGGED_OUT",
+        "LOGIN_FAILED",
+        "LOGGED_IN",
+        "LOCKED"
+      ],
+  
+      "constraints": [
+        "Mật khẩu phải có độ dài tối thiểu",
+        "Tài khoản bị khóa không được đăng nhập",
+        "Sai mật khẩu đủ số lần thì tài khoản bị khóa",
+        "Chỉ tài khoản đang đăng nhập mới có session hợp lệ"
+      ]
+    },
+  
+    "email_notification": {
+      "function": "Thông báo qua email",
+  
+      "parameters": {
+        "max_retry": 2
+      },
+  
+      "states": [
+        "IDLE",
+        "QUEUED",
+        "SENT",
+        "FAILED"
+      ],
+  
+      "constraints": [
+        "Email người nhận phải hợp lệ",
+        "Thông báo phải QUEUED trước khi SENT",
+        "Số lần retry không âm",
+        "Quá số lần retry cho phép thì FAILED"
+      ]
+    }
+  }
