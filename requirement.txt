@@ -1,0 +1,15 @@
+pytest>=8.0
+ruff>=0.6
+streamlit      # Web interface
+pydantic       # Data validation
+pyyaml         # YAML parsing
+networkx       # Graph modeling
+pyvis          # Kripke visualization
+z3-solver      # Constraint verification
+jinja2         # Code generation
+pytest         # Testing
+pytest-cov     # Test coverage
+coverage       # Coverage analysis
+hypothesis     # Property-based testing
+ruff           # Static analysis
+mypy           # Type checking
