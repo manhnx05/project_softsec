@@ -1,0 +1,77 @@
+project_name: LMS Authentication
+version: "1.0"
+
+functions:
+  - name: Authentication
+    description: User login authentication
+
+    parameters:
+      - name: max_attempts
+        type: integer
+        default: 3
+        description: Maximum failed login attempts
+
+      - name: session_ttl_seconds
+        type: integer
+        default: 3600
+        description: Session lifetime
+
+      - name: min_password_length
+        type: integer
+        default: 8
+        description: Minimum password length
+
+    states:
+      - name: LOGGED_OUT
+        description: User is not authenticated
+
+      - name: LOGIN_FAILED
+        description: Login attempt failed
+
+      - name: LOGGED_IN
+        description: User is authenticated
+
+      - name: LOCKED
+        description: Account is locked
+
+    transitions:
+      - source: LOGGED_OUT
+        target: LOGGED_IN
+        event: correct_password
+
+      - source: LOGGED_OUT
+        target: LOGIN_FAILED
+        event: wrong_password
+
+      - source: LOGIN_FAILED
+        target: LOGIN_FAILED
+        event: wrong_password
+
+      - source: LOGIN_FAILED
+        target: LOGGED_IN
+        event: correct_password
+
+      - source: LOGIN_FAILED
+        target: LOCKED
+        event: max_attempts
+
+      - source: LOGGED_IN
+        target: LOGGED_OUT
+        event: logout
+
+      - source: LOCKED
+        target: LOGGED_OUT
+        event: reset_lock
+
+    constraints:
+      - name: password_length
+        expression: password_length >= min_password_length
+        description: Password must satisfy minimum length
+
+      - name: attempt_limit
+        expression: attempts <= max_attempts
+        description: Failed attempts cannot exceed maximum
+
+      - name: locked_login
+        expression: state == LOCKED -> login_allowed == false
+        description: Locked users cannot loginss
