@@ -1,0 +1,8 @@
+from enum import Enum
+
+
+class {{ class_name }}(str, Enum):
+
+{% for state in states %}
+    {{ state.name }} = "{{ state.name }}"
+{% endfor %}
