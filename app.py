@@ -1,12 +1,12 @@
 import streamlit as st
+import yaml
 
-from src.specification.loader import load_project_spec
-from src.kripke.builder import build_kripke
-from src.kripke.visualizer import create_pyvis
 from src.constraints.z3_solver import (
     Z3ConstraintEngine,
 )
-
+from src.kripke.builder import build_kripke
+from src.kripke.visualizer import create_pyvis
+from src.specification.loader import load_project_spec
 
 st.set_page_config(
     page_title="LMS Security Simulator",
@@ -33,6 +33,7 @@ tabs = st.tabs(
         "7. Static Testing",
         "8. Dynamic Testing",
         "9. Report",
+        "10. C Security Analysis",
     ]
 )
 
@@ -40,7 +41,7 @@ tabs = st.tabs(
 try:
     specifications = load_project_spec("specs")
 
-except Exception as exc:
+except (OSError, ValueError, yaml.YAMLError) as exc:
 
     st.error(
         f"Cannot load specification: {exc}"
@@ -264,3 +265,75 @@ Dynamic Testing
 Security Report
 """
     )
+
+
+# ============================================================
+# C SECURITY ANALYSIS
+# ============================================================
+
+with tabs[9]:
+
+    st.header("C Buffer Security Analysis")
+
+    st.write(
+        "Analyze the vulnerable and corrected memcpy examples with a bounded "
+        "formal model, GCC diagnostics, optional CBMC, sanitizers, and "
+        "deterministic mutation fuzzing."
+    )
+
+    st.warning(
+        "The vulnerable C source is an isolated teaching example. "
+        "Run it only through this analysis workflow."
+    )
+
+    iterations = st.number_input(
+        "Fuzz iterations",
+        min_value=1,
+        max_value=1_000_000,
+        value=10_000,
+        step=1_000,
+    )
+    seed = st.number_input(
+        "Reproducible fuzz seed",
+        min_value=0,
+        max_value=4_294_967_295,
+        value=12_648_430,
+        step=1,
+    )
+
+    if st.button("Run end-to-end C analysis"):
+        from src.c_analysis.runner import run_c_analysis
+
+        try:
+            analysis_report = run_c_analysis(
+                iterations=int(iterations),
+                seed=int(seed),
+            )
+            st.session_state["c_analysis_report"] = analysis_report.to_dict()
+        except (OSError, ValueError) as exc:
+            st.error(f"C analysis could not be completed: {exc}")
+
+    analysis_report = st.session_state.get("c_analysis_report")
+    if analysis_report:
+        st.caption(
+            f"Generated at {analysis_report['generated_at']} · "
+            f"Report: {analysis_report['report_path']}"
+        )
+
+        for check in analysis_report["checks"]:
+            status = check["status"]
+            message = f"**{check['name']} — {status}:** {check['summary']}"
+            if status == "PASS":
+                st.success(message)
+            elif status == "FINDING":
+                st.warning(message)
+            elif status == "UNAVAILABLE":
+                st.info(message)
+            else:
+                st.error(message)
+
+            if check["command"]:
+                st.code(check["command"], language="shell")
+            if check["details"]:
+                with st.expander(f"Details: {check['name']}"):
+                    st.code(check["details"])
