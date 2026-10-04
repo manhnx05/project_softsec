@@ -15,3 +15,6 @@ wheels/
 .env.*
 !.env.example
 reports_*.html
+reports/c_analysis/
+*.exe
+*.o
