@@ -1,5 +1,6 @@
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any
 
 from src.models.states import AuthState
 
@@ -14,7 +15,7 @@ class Constraint:
 
     description: str
 
-    check: Callable[[dict], bool]
+    check: Callable[[dict[str, Any]], bool]
 
 
 # =============================================================
@@ -142,7 +143,7 @@ EMAIL_CONSTRAINTS = [
 
 def verify_constraints(
     constraints: list[Constraint],
-    context: dict
+    context: dict[str, Any]
 ) -> tuple[bool, list[str]]:
 
     errors = []
@@ -155,7 +156,7 @@ def verify_constraints(
                 context
             )
 
-        except Exception as exc:
+        except (KeyError, TypeError, ValueError) as exc:
 
             errors.append(
                 f"{constraint.name}: "
