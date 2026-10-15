@@ -14,7 +14,7 @@ class CodeGenerator:
 
         template_dir = Path(
             __file__
-        ).parent / "templates"
+        ).parent / "templetes"
 
         self.environment = Environment(
             loader=FileSystemLoader(template_dir)
@@ -24,7 +24,7 @@ class CodeGenerator:
         self,
         function: FunctionSpec,
         output_dir: str = "generated",
-    ):
+    ) -> Path:
 
         output_path = Path(output_dir)
         output_path.mkdir(
