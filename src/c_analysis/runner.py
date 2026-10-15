@@ -300,14 +300,19 @@ def _run_gcc_analysis(
             "-Wextra",
             "-Wconversion",
             "-Wsign-conversion",
-            "-fanalyzer",
+        ]
+        if compiler_path.endswith(("gcc", "/gcc")):
+            command.append("-fanalyzer")
+        else:
+            command.extend(["-Xclang", "-analyze"])
+        command.extend([
             "-I",
             str(C_ROOT / "include"),
             "-c",
             str(source),
             "-o",
             str(object_path),
-        ]
+        ])
         return_code, stdout, stderr, error = _run_command(command)
         diagnostics = "\n".join(
             part for part in (stdout, stderr) if part
@@ -358,12 +363,16 @@ def _run_cbmc(report: AnalysisReport) -> None:
         return
 
     harness = C_ROOT / "harness" / "cbmc_buffer_copy_harness.c"
+    implementation_statuses: dict[str, CheckStatus] = {}
+    details: list[str] = []
     for implementation in ("vulnerable", "safe"):
         source = C_ROOT / implementation / "buffer_copy.c"
         command = [
             cbmc,
             str(source),
             str(harness),
+            "-I",
+            str(C_ROOT / "include"),
             "--bounds-check",
             "--pointer-check",
             "--signed-overflow-check",
@@ -387,6 +396,8 @@ def _run_cbmc(report: AnalysisReport) -> None:
             status = "ERROR"
             summary = f"CBMC exited with status {return_code} without a recognized result."
 
+        implementation_statuses[implementation] = status
+        details.append(f"{implementation}: {summary}\n{output}")
         report.checks.append(
             CheckResult(
                 name=f"CBMC ({implementation})",
@@ -396,6 +407,25 @@ def _run_cbmc(report: AnalysisReport) -> None:
                 details=output,
             )
         )
+
+    if any(status == "FINDING" for status in implementation_statuses.values()):
+        aggregate_status: CheckStatus = "FINDING"
+        aggregate_summary = "CBMC found at least one counterexample in the harnessed C code."
+    elif all(status == "PASS" for status in implementation_statuses.values()):
+        aggregate_status = "PASS"
+        aggregate_summary = "CBMC verified the vulnerable and safe implementations in the bounded harness."
+    else:
+        aggregate_status = "ERROR"
+        aggregate_summary = "CBMC returned an incomplete or inconsistent result across the harness checks."
+
+    report.checks.append(
+        CheckResult(
+            name="CBMC bounded model checking",
+            status=aggregate_status,
+            summary=aggregate_summary,
+            details="\n\n".join(details),
+        )
+    )
 
 
 def _compile(
