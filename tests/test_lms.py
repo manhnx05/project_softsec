@@ -151,6 +151,25 @@ def test_logout_invalidates_session():
     )
 
 
+def test_logout_revokes_all_sessions_permanently():
+
+    auth = AuthenticationModule()
+    auth.register("student", "password123")
+
+    logged_out_session = auth.login("student", "password123")
+    remaining_session = auth.login("student", "password123")
+
+    assert logged_out_session is not None
+    assert remaining_session is not None
+    assert auth.logout(logged_out_session.token) is True
+    assert auth.authenticate(remaining_session.token) is None
+
+    new_session = auth.login("student", "password123")
+
+    assert new_session is not None
+    assert auth.authenticate(remaining_session.token) is None
+
+
 def test_short_password_rejected():
 
     auth = AuthenticationModule()
