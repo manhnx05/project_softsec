@@ -1,5 +1,6 @@
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any
 
 
 @dataclass
@@ -13,9 +14,9 @@ class ConstraintResult:
 class ConstraintRule:
     name: str
     description: str
-    check: Callable[[dict], bool]
+    check: Callable[[dict[str, Any]], bool]
 
-    def evaluate(self, context: dict) -> ConstraintResult:
+    def evaluate(self, context: dict[str, Any]) -> ConstraintResult:
 
         try:
             passed = self.check(context)
@@ -30,7 +31,7 @@ class ConstraintRule:
                 ),
             )
 
-        except Exception as exc:
+        except (KeyError, TypeError, ValueError) as exc:
 
             return ConstraintResult(
                 name=self.name,
