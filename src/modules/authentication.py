@@ -231,6 +231,10 @@ class AuthenticationModule:
         if session is None:
             return False
 
+        for active_token, active_session in tuple(self.sessions.items()):
+            if active_session.username == session.username:
+                self.sessions.pop(active_token, None)
+
         user = self.users.get(
             session.username
         )
