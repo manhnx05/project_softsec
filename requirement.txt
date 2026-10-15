@@ -1,6 +1,7 @@
 pytest>=8.0
 ruff>=0.6
 streamlit      # Web interface
+pandas         # Dashboard data tables and charts
 pydantic       # Data validation
 pyyaml         # YAML parsing
 networkx       # Graph modeling
