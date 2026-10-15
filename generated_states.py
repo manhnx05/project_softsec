@@ -6,6 +6,7 @@
 
 from enum import Enum
 
+
 class AuthStateGenerated(str, Enum):
     LOGGED_OUT = "LOGGED_OUT"
     LOGIN_FAILED = "LOGIN_FAILED"
