@@ -1,7 +1,29 @@
 [project]
-name = "project softsec"
+name = "project-softsec"
 version = "0.1.0"
-description = "project software security"
+description = "Project software security and formal verification playground"
 readme = "README.md"
-requires-python = ">=3.13"
-dependencies = []
+requires-python = ">=3.11"
+dependencies = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+    "streamlit",
+    "pandas",
+    "pydantic",
+    "pyyaml",
+    "networkx",
+    "pyvis",
+    "z3-solver",
+    "jinja2",
+    "pytest-cov",
+    "coverage",
+    "hypothesis",
+    "mypy",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
+[[tool.mypy.overrides]]
+module = ["z3", "z3.*", "networkx.*", "pyvis.*", "yaml.*"]
+ignore_missing_imports = true
