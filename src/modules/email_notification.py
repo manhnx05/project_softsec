@@ -1,8 +1,7 @@
-from dataclasses import dataclass
 import re
+from dataclasses import dataclass
 
 from src.models.states import EmailState
-
 
 # =============================================================
 # EMAIL VALIDATION
@@ -189,7 +188,7 @@ class EmailNotificationModule:
 
             return True
 
-        except Exception:
+        except (OSError, RuntimeError):
 
             # Gửi thất bại
 
@@ -236,7 +235,7 @@ class MockEmailTransport:
 
         self.should_fail = should_fail
 
-        self.sent_messages = []
+        self.sent_messages: list[dict[str, str]] = []
 
     def send(
         self,
