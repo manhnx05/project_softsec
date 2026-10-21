@@ -1,3 +1,7 @@
+import shutil
+import subprocess
+from pathlib import Path
+
 import pytest
 from streamlit.testing.v1 import AppTest
 
@@ -29,11 +33,71 @@ def test_state_generator_renders_spec(tmp_path):
     assert "LOGGED_OUT" in generated_source
 
 
+def test_safe_c_generator_emits_canonical_implementation_and_header(tmp_path):
+    generated_files = CodeGenerator().generate_safe_c_files(str(tmp_path))
+    project_root = Path(__file__).resolve().parents[1]
+
+    assert [path.name for path in generated_files] == [
+        "buffer_copy.c",
+        "buffer_copy.h",
+    ]
+    assert generated_files[0].read_bytes() == (
+        project_root / "csrc" / "safe" / "buffer_copy.c"
+    ).read_bytes()
+    assert generated_files[1].read_bytes() == (
+        project_root / "csrc" / "include" / "buffer_copy.h"
+    ).read_bytes()
+
+    compiler = shutil.which("gcc")
+    if compiler is not None:
+        binary = tmp_path / "generated_safe_copy"
+        subprocess.run(
+            [
+                compiler,
+                "-std=c11",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-I",
+                str(tmp_path),
+                str(generated_files[0]),
+                str(project_root / "csrc" / "cli" / "buffer_copy_cli.c"),
+                "-o",
+                str(binary),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        assert subprocess.run(
+            [str(binary), "16"],
+            check=False,
+            capture_output=True,
+        ).returncode == 0
+        assert subprocess.run(
+            [str(binary), "-1"],
+            check=False,
+            capture_output=True,
+        ).returncode == 2
+
+
 def test_dashboard_actions_store_section_results():
     app = AppTest.from_file("../app.py").run()
 
     app.button(key="run_function_scenario").click().run()
     assert app.session_state["function_result"]["Login"] == "PASS"
+    assert all(
+        scenario["Result"] == "PASS"
+        for scenario in app.session_state["function_result"]["Scenarios"]
+    )
+
+    app.selectbox(key="function_scenario_selector").select(1).run()
+    app.button(key="run_function_scenario").click().run()
+    assert app.session_state["function_result"]["Function"] == "EmailNotification"
+    assert all(
+        scenario["Result"] == "PASS"
+        for scenario in app.session_state["function_result"]["Scenarios"]
+    )
 
     app.button(
         key="FormSubmitter:parameter_validation_form-Validate parameters"
@@ -53,4 +117,16 @@ def test_dashboard_actions_store_section_results():
 
     app.button(key="build_kripke_model").click().run()
     assert app.session_state["kripke_result"]["errors"] == []
+    kripke_result = app.session_state["kripke_result"]
+    assert len(kripke_result["state_rows"]) == kripke_result["states"]
+    assert all(row["Propositions"] for row in kripke_result["state_rows"])
+    assert all(row["Description"] for row in kripke_result["state_rows"])
+    assert len(kripke_result["transition_rows"]) == kripke_result["transitions"]
+    assert "doublecircle" in kripke_result["graph"]
+    assert not app.exception
+
+    app.button(key="generate_safe_c_code").click().run()
+    generated_safe_c = app.session_state["generated_safe_c_files"]
+    assert len(generated_safe_c) == 2
+    assert all(Path(path).is_file() for path in generated_safe_c)
     assert not app.exception

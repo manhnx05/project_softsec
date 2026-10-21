@@ -44,16 +44,16 @@ python main.py --app
 
 Mở URL Streamlit được in ra terminal, thường là `http://localhost:8501`.
 
-- **Functions:** chọn Authentication hoặc EmailNotification, bấm **Run function scenario** để chạy module và xem trạng thái từng bước.
+- **Functions:** chọn Authentication hoặc EmailNotification, bấm **Run function scenario** để chạy các kịch bản đăng nhập thành công, khóa tài khoản/đăng xuất, gửi email, retry và vượt giới hạn retry.
 - **Parameters:** sửa giá trị trong form, bấm **Validate parameters** để xem PASS/FAIL theo kiểu và giới hạn.
 - **States:** chọn function, bấm **Analyze state transitions** để xem bảng state/transition và state không reachable.
 - **Constraints:** chọn Authentication hoặc Email, nhập dữ liệu rồi bấm nút kiểm tra để xem kết quả từng rule. `SAT` nghĩa là có nghiệm, không phải chứng minh mọi yêu cầu với mọi đầu vào.
-- **Kripke:** chọn function, bấm **Build and validate Kripke model** để xem số state/transition, kết quả validation và tải HTML.
-- **Code Generation:** bấm **Generate state enums** để sinh file trong `generated/`, xem source và tải file.
-- **Static Testing:** bấm nút để chạy Ruff và mypy thật.
+- **Kripke:** bấm **Build and validate Kripke model** để xem sơ đồ ngay trên giao diện, trạng thái khởi đầu, mô tả/mệnh đề của từng state, cùng event và guard của transition; có thể tải HTML.
+- **Code Generation:** sinh enum Python hoặc bấm **Generate safe C buffer-copy code** để xuất implementation C an toàn và header trong `generated/`, xem source và tải file.
+- **Static Testing:** chạy Ruff và mypy cho Python. Tab C Security Analysis phân biệt rõ GCC diagnostics, CBMC BMC, Z3/SMT và ASan/UBSan; BMC/SMT là kiểm chứng trên mô hình/miền đã nêu, ASan/UBSan kiểm tra khi thực thi.
 - **Dynamic Testing:** chạy pytest hoặc pytest kèm coverage.
 - **Report:** tổng hợp kết quả đã chạy trong phiên dashboard hiện tại và tải JSON.
-- **C Security Analysis:** chọn số vòng fuzz/seed rồi bấm **Run end-to-end C analysis**.
+- **C Security Analysis:** chọn số vòng fuzz/seed rồi bấm **Run end-to-end C analysis**. Báo cáo ghi bounds, seed corpus, input-class coverage, black-box kiểm tra CLI ở biên và white-box fuzz trực tiếp có timeout để phát hiện crash/hang. Báo cáo chi tiết có thể tải JSON.
 
 ### Chạy từng nhóm test
 

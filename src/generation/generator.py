@@ -1,3 +1,4 @@
+import shutil
 from pathlib import Path
 
 from jinja2 import (
@@ -52,3 +53,24 @@ class CodeGenerator:
         )
 
         return file_path
+
+    def generate_safe_c_files(
+        self,
+        output_dir: str = "generated",
+    ) -> list[Path]:
+        """Copy the canonical safe C implementation and its public header."""
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+
+        project_root = Path(__file__).resolve().parents[2]
+        source_files = (
+            project_root / "csrc" / "safe" / "buffer_copy.c",
+            project_root / "csrc" / "include" / "buffer_copy.h",
+        )
+        generated_files = []
+        for source in source_files:
+            destination = output_path / source.name
+            shutil.copyfile(source, destination)
+            generated_files.append(destination)
+
+        return generated_files

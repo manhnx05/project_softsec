@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 class KripkeState:
     name: str
     propositions: set[str] = field(default_factory=set)
+    description: str = ""
 
 
 @dataclass
@@ -12,6 +13,7 @@ class KripkeTransition:
     source: str
     target: str
     label: str
+    guard: str | None = None
 
 
 @dataclass
@@ -31,9 +33,11 @@ class KripkeModel:
         self,
         name: str,
         propositions: set[str] | None = None,
+        description: str = "",
     ):
         self.states[name] = KripkeState(
             name=name,
+            description=description,
             propositions=propositions or set(),
         )
 
@@ -42,11 +46,13 @@ class KripkeModel:
         source: str,
         target: str,
         label: str,
+        guard: str | None = None,
     ):
         self.transitions.append(
             KripkeTransition(
                 source=source,
                 target=target,
                 label=label,
+                guard=guard,
             )
         )

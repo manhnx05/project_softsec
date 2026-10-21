@@ -42,15 +42,17 @@ class AnalysisReport:
     generated_at: str
     checks: list[CheckResult] = field(default_factory=list)
     report_path: str = ""
+    fuzzing: dict[str, object] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
         return {
             "generated_at": self.generated_at,
             "checks": [asdict(check) for check in self.checks],
             "report_path": self.report_path,
+            "fuzzing": self.fuzzing,
             "scope": (
-                "Bounded buffer-copy model, GCC analyzer, optional CBMC, "
-                "sanitizer demonstration, and deterministic mutation fuzzing."
+                "Bounded buffer-copy model, GCC analyzer, CBMC, Z3/SMT, "
+                "ASan/UBSan, black-box boundary tests, and white-box fuzzing."
             ),
             "model_constraints": list(SAFETY_CONSTRAINTS),
         }
@@ -539,6 +541,138 @@ def _run_native_boundary_tests(
     )
 
 
+def _run_blackbox_boundary_tests(
+    report: AnalysisReport,
+    compiler: str,
+    work_dir: Path,
+) -> None:
+    compiler_path = shutil.which(compiler)
+    if compiler_path is None:
+        report.checks.append(
+            CheckResult(
+                name="Black-box bounded CLI tests",
+                status="UNAVAILABLE",
+                summary=f"C compiler '{compiler}' was not found on PATH.",
+            )
+        )
+        return
+
+    source = C_ROOT / "safe" / "buffer_copy.c"
+    cli = C_ROOT / "cli" / "buffer_copy_cli.c"
+    binary = work_dir / "buffer_copy_blackbox.exe"
+    command, return_code, stdout, stderr, error = _compile(
+        compiler_path,
+        [source, cli],
+        binary,
+        sanitizer=False,
+    )
+    if error or return_code != 0:
+        output = "\n".join(part for part in (stdout, stderr, error or "") if part)
+        report.checks.append(
+            CheckResult(
+                name="Black-box bounded CLI tests",
+                status="ERROR",
+                summary=error or f"CLI build failed with exit code {return_code}.",
+                command=_format_command(command),
+                details=output,
+            )
+        )
+        return
+
+    cases = (
+        ("-2147483648", 2),
+        ("-1", 2),
+        ("0", 0),
+        ("1", 0),
+        ("15", 0),
+        (str(BUFFER_CAPACITY), 0),
+        (str(BUFFER_CAPACITY + 1), 2),
+        ("2147483647", 2),
+        ("not-an-integer", 64),
+    )
+    results: list[dict[str, object]] = []
+    details: list[str] = []
+    finding = False
+    timed_out = False
+    execution_error = False
+    for input_value, expected_exit in cases:
+        actual_exit, run_stdout, run_stderr, run_error = _run_command(
+            [str(binary), input_value],
+            timeout_seconds=2,
+        )
+        case_timed_out = bool(run_error and "timed out" in run_error.lower())
+        timed_out = timed_out or case_timed_out
+        case_execution_error = bool(run_error and not case_timed_out)
+        execution_error = execution_error or case_execution_error
+        passed = actual_exit == expected_exit and run_error is None
+        if not passed:
+            finding = True
+        output = "\n".join(part for part in (run_stdout, run_stderr) if part).strip()
+        results.append(
+            {
+                "input": input_value,
+                "expected_exit": expected_exit,
+                "actual_exit": actual_exit,
+                "passed": passed,
+                "timed_out": case_timed_out,
+                "execution_error": run_error if case_execution_error else None,
+            }
+        )
+        details.append(
+            f"input={input_value!r}, expected_exit={expected_exit}, "
+            f"actual_exit={actual_exit}, error={run_error or 'none'}\n{output}"
+        )
+
+    status: CheckStatus = (
+        "ERROR" if execution_error else "FINDING" if finding else "PASS"
+    )
+    if execution_error:
+        summary = "A bounded CLI case could not be executed."
+    elif timed_out:
+        summary = "A bounded CLI test timed out; possible hang detected."
+    elif finding:
+        summary = "At least one safe CLI boundary input crashed or returned an unexpected result."
+    else:
+        summary = (
+            f"All {len(cases)} black-box CLI inputs matched expected results "
+            f"within signed 32-bit bounds and buffer capacity {BUFFER_CAPACITY}."
+        )
+    report.fuzzing["black_box"] = {
+        "mode": "Black-box CLI boundary testing",
+        "bounds": {
+            "signed_int_min": -(2**31),
+            "signed_int_max": 2**31 - 1,
+            "buffer_capacity": BUFFER_CAPACITY,
+            "timeout_seconds_per_case": 2,
+        },
+        "seed_data": [case[0] for case in cases],
+        "coverage": {
+            "cases_total": len(results),
+            "cases_passed": sum(bool(result["passed"]) for result in results),
+            "input_classes": [
+                "INT_MIN",
+                "negative",
+                "zero",
+                "positive in-range",
+                "exact capacity",
+                "over capacity",
+                "INT_MAX",
+                "malformed integer",
+            ],
+        },
+        "cases": results,
+    }
+    report.checks.append(
+        CheckResult(
+            name="Black-box bounded CLI tests",
+            status=status,
+            summary=summary,
+            command=_format_command(command),
+            details="\n".join(details),
+        )
+    )
+
+
 def _run_dynamic_analysis(
     report: AnalysisReport,
     compiler: str,
@@ -735,8 +869,30 @@ def _run_fuzzing(
         timeout_seconds=30,
     )
     output = "\n".join(part for part in (run_stdout, run_stderr) if part).strip()
-    if run_error:
-        status: CheckStatus = "ERROR"
+    coverage_match = re.search(
+        r"^COVERAGE total=(\d+) negative=(\d+) zero=(\d+) "
+        r"valid_positive=(\d+) over_capacity=(\d+) integer_extreme=(\d+)$",
+        output,
+        re.MULTILINE,
+    )
+    coverage = (
+        {
+            "total": int(coverage_match.group(1)),
+            "negative": int(coverage_match.group(2)),
+            "zero": int(coverage_match.group(3)),
+            "valid_positive": int(coverage_match.group(4)),
+            "over_capacity": int(coverage_match.group(5)),
+            "integer_extreme": int(coverage_match.group(6)),
+        }
+        if coverage_match
+        else {}
+    )
+    status: CheckStatus
+    if run_error and "timed out" in run_error.lower():
+        status = "FINDING"
+        summary = "White-box fuzzer exceeded its time bound; possible hang detected."
+    elif run_error:
+        status = "ERROR"
         summary = run_error
     elif run_code == 0:
         status = "PASS"
@@ -749,6 +905,41 @@ def _run_fuzzing(
         status = "FINDING"
         summary = f"Fuzzing found a crash or assertion failure (exit code {run_code})."
 
+    coverage_classes = sum(
+        1
+        for name, count in coverage.items()
+        if name != "total" and isinstance(count, int) and count > 0
+    )
+    report.fuzzing["white_box"] = {
+        "mode": "White-box deterministic direct-call fuzzing",
+        "seed": seed,
+        "iterations": iterations,
+        "bounds": {
+            "buffer_capacity": BUFFER_CAPACITY,
+            "signed_int_min": -(2**31),
+            "signed_int_max": 2**31 - 1,
+            "random_length_min": -48,
+            "random_length_max": 48,
+            "timeout_seconds": 30,
+        },
+        "seed_data": [
+            -(2**31),
+            -1,
+            0,
+            1,
+            BUFFER_CAPACITY - 1,
+            BUFFER_CAPACITY,
+            BUFFER_CAPACITY + 1,
+            2**31 - 1,
+        ],
+        "coverage": {
+            **coverage,
+            "input_classes_covered": coverage_classes,
+            "input_classes_total": 5,
+        },
+        "sanitizers": "ASan/UBSan" if sanitized else "not available",
+        "status": status,
+    }
     report.checks.append(
         CheckResult(
             name=(
@@ -795,6 +986,7 @@ def run_c_analysis(
         _run_gcc_analysis(report, compiler, work_dir)
         _run_cbmc(report)
         _run_dynamic_analysis(report, compiler, work_dir)
+        _run_blackbox_boundary_tests(report, compiler, work_dir)
         _run_fuzzing(report, compiler, work_dir, iterations, seed)
 
     _persist_report(report, report_path)

@@ -21,6 +21,11 @@ int main(int argument_count, char **arguments)
     char *end = NULL;
     unsigned long iterations = 10000UL;
     unsigned long iteration;
+    unsigned long negative_cases = 0UL;
+    unsigned long zero_cases = 0UL;
+    unsigned long valid_positive_cases = 0UL;
+    unsigned long over_capacity_cases = 0UL;
+    unsigned long integer_extreme_cases = 0UL;
     uint32_t seed = UINT32_C(0x00C0FFEE);
     uint32_t random_state;
 
@@ -59,7 +64,7 @@ int main(int argument_count, char **arguments)
             original_destination[index] = UINT8_C(0xA5);
         }
 
-        switch (iteration % 8UL) {
+        switch (iteration % 10UL) {
         case 0UL:
             length = INT_MIN;
             break;
@@ -70,17 +75,35 @@ int main(int argument_count, char **arguments)
             length = 0;
             break;
         case 3UL:
-            length = BUFFER_COPY_CAPACITY;
+            length = 1;
             break;
         case 4UL:
-            length = BUFFER_COPY_CAPACITY + 1;
+            length = BUFFER_COPY_CAPACITY - 1;
             break;
         case 5UL:
+            length = BUFFER_COPY_CAPACITY;
+            break;
+        case 6UL:
+            length = BUFFER_COPY_CAPACITY + 1;
+            break;
+        case 7UL:
             length = INT_MAX;
             break;
         default:
             length = (int)(next_value(&random_state) % UINT32_C(97)) - 48;
             break;
+        }
+
+        if (length == INT_MIN || length == INT_MAX) {
+            ++integer_extreme_cases;
+        } else if (length < 0) {
+            ++negative_cases;
+        } else if (length == 0) {
+            ++zero_cases;
+        } else if (length <= BUFFER_COPY_CAPACITY) {
+            ++valid_positive_cases;
+        } else {
+            ++over_capacity_cases;
         }
 
         result = copy_buffer(
@@ -111,6 +134,16 @@ int main(int argument_count, char **arguments)
         "PASS: %lu iterations completed with seed %u.\n",
         iterations,
         (unsigned int)seed
+    );
+    (void)printf(
+        "COVERAGE total=%lu negative=%lu zero=%lu valid_positive=%lu "
+        "over_capacity=%lu integer_extreme=%lu\n",
+        iterations,
+        negative_cases,
+        zero_cases,
+        valid_positive_cases,
+        over_capacity_cases,
+        integer_extreme_cases
     );
     return 0;
 }
