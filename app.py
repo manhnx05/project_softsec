@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -8,6 +9,7 @@ import yaml
 from src.constraints.z3_solver import Z3ConstraintEngine
 from src.generation.generator import CodeGenerator
 from src.kripke.builder import build_kripke
+from src.kripke.model import KripkeModel
 from src.kripke.visualizer import create_pyvis
 from src.models.states import AuthState
 from src.modules.authentication import AuthenticationModule, LoginParams
@@ -88,6 +90,56 @@ def run_function_scenario(function: FunctionSpec) -> dict[str, object]:
         )
         user = auth.register("streamlit-demo", "SecurePass123")
         session = auth.login("streamlit-demo", "SecurePass123")
+        scenarios = [
+            {
+                "Scenario": "Valid login and session",
+                "Expected": "Login succeeds; session authenticates",
+                "Result": (
+                    "PASS"
+                    if session is not None and auth.authenticate(session.token) is user
+                    else "FAIL"
+                ),
+            }
+        ]
+        failed_auth = AuthenticationModule(
+            LoginParams(
+                max_attempts=int(parameter_value(defaults, "max_attempts", 3)),
+                session_ttl_seconds=int(parameter_value(defaults, "session_ttl_seconds", 3600)),
+                min_password_length=int(parameter_value(defaults, "min_password_length", 8)),
+            )
+        )
+        failed_user = failed_auth.register("lockout-demo", "SecurePass123")
+        for _ in range(int(parameter_value(defaults, "max_attempts", 3))):
+            failed_auth.login("lockout-demo", "wrong-password")
+        locked_login = failed_auth.login("lockout-demo", "SecurePass123")
+        scenarios.append(
+            {
+                "Scenario": "Repeated invalid passwords lock account",
+                "Expected": "Account locked; subsequent login rejected",
+                "Result": (
+                    "PASS"
+                    if failed_user.state.value == "LOCKED" and locked_login is None
+                    else "FAIL"
+                ),
+            }
+        )
+        logout_result = (
+            auth.logout(session.token)
+            if session is not None
+            else False
+        )
+        scenarios.append(
+            {
+                "Scenario": "Logout invalidates active session",
+                "Expected": "Logout succeeds; token no longer authenticates",
+                "Result": (
+                    "PASS"
+                    if logout_result
+                    and auth.authenticate(session.token) is None
+                    else "FAIL"
+                ),
+            }
+        )
         return {
             "Function": function.name,
             "Registration": "PASS",
@@ -98,6 +150,7 @@ def run_function_scenario(function: FunctionSpec) -> dict[str, object]:
                 else "FAIL"
             ),
             "Final state": user.state.value,
+            "Scenarios": scenarios,
         }
 
     if function.name.lower() == "emailnotification":
@@ -113,12 +166,55 @@ def run_function_scenario(function: FunctionSpec) -> dict[str, object]:
             notification.notification_id,
             MockEmailTransport(),
         )
+        retry_notification = email.create(
+            "student@example.com",
+            "Retry scenario",
+            "Retry test",
+        )
+        email.send(
+            retry_notification.notification_id,
+            MockEmailTransport(should_fail=True),
+        )
+        recovered = email.send(
+            retry_notification.notification_id,
+            MockEmailTransport(),
+        )
+        exhausted_notification = email.create(
+            "student@example.com",
+            "Retry exhaustion scenario",
+            "Retry limit test",
+        )
+        failed_transport = MockEmailTransport(should_fail=True)
+        for _ in range(int(parameter_value(defaults, "max_retry", 2)) + 1):
+            email.send(exhausted_notification.notification_id, failed_transport)
+        scenarios = [
+            {
+                "Scenario": "Valid recipient and successful delivery",
+                "Expected": "Notification reaches SENT",
+                "Result": "PASS" if sent else "FAIL",
+            },
+            {
+                "Scenario": "Transient failure then retry",
+                "Expected": "Notification recovers to SENT",
+                "Result": "PASS" if recovered else "FAIL",
+            },
+            {
+                "Scenario": "Retry limit exceeded",
+                "Expected": "Notification reaches FAILED",
+                "Result": (
+                    "PASS"
+                    if exhausted_notification.state.value == "FAILED"
+                    else "FAIL"
+                ),
+            },
+        ]
         return {
             "Function": function.name,
             "Recipient validation": "PASS",
             "Send": "PASS" if sent else "FAIL",
             "Final state": notification.state.value,
             "Retries": notification.retry_count,
+            "Scenarios": scenarios,
         }
 
     return {"Function": function.name, "Result": "No executable demo is registered."}
@@ -204,6 +300,35 @@ def render_state_diagram(title: str, states: list[str], transitions: list[tuple[
     st.graphviz_chart("\n".join(body))
 
 
+def render_kripke_diagram(model: KripkeModel) -> str:
+    lines = [
+        "digraph kripke_model {",
+        "  rankdir=LR;",
+        '  node [style="filled", fillcolor="#EAF2FF", color="#4C78A8"];',
+        '  edge [color="#2F6B9F", fontcolor="#1F2937"];',
+    ]
+    for state in model.states.values():
+        label = state.name
+        if state.name == model.initial_state:
+            label += "\\n(initial)"
+        lines.append(
+            f"  {json.dumps(state.name)} "
+            f"[label={json.dumps(label)}, "
+            f"shape={'doublecircle' if state.name == model.initial_state else 'ellipse'}];"
+        )
+    for transition in model.transitions:
+        label = transition.label
+        if transition.guard:
+            label += f" [{transition.guard}]"
+        lines.append(
+            f"  {json.dumps(transition.source)} -> "
+            f"{json.dumps(transition.target)} "
+            f"[label={json.dumps(label)}];"
+        )
+    lines.append("}")
+    return "\n".join(lines)
+
+
 st.title("LMS Software Security Simulator")
 st.caption("End-to-End Software Security Verification Pipeline")
 
@@ -268,6 +393,10 @@ with tabs[0]:
         function_result = st.session_state.get("function_result")
         if function_result and function_result.get("Function") == selected_function.name:
             st.dataframe(pd.DataFrame([function_result]), width="stretch")
+            scenarios = function_result.get("Scenarios", [])
+            if scenarios:
+                st.subheader("Executable test scenarios")
+                st.dataframe(pd.DataFrame(scenarios), width="stretch")
 
 with tabs[1]:
     st.header("Parameters")
@@ -495,6 +624,25 @@ with tabs[4]:
                 "transitions": len(analysis["model"].transitions),
                 "errors": analysis["errors"],
                 "unreachable": sorted(analysis["unreachable"]),
+                "graph": render_kripke_diagram(analysis["model"]),
+                "state_rows": [
+                    {
+                        "State": state.name,
+                        "Initial": state.name == analysis["model"].initial_state,
+                        "Description": state.description,
+                        "Propositions": ", ".join(sorted(state.propositions)),
+                    }
+                    for state in analysis["model"].states.values()
+                ],
+                "transition_rows": [
+                    {
+                        "From": transition.source,
+                        "Event": transition.label,
+                        "Guard": transition.guard or "Always",
+                        "To": transition.target,
+                    }
+                    for transition in analysis["model"].transitions
+                ],
                 "output": output,
             }
 
@@ -508,6 +656,12 @@ with tabs[4]:
                 st.warning("Unreachable states: " + ", ".join(kripke_result["unreachable"]))
             else:
                 st.success("Kripke model is structurally valid and all states are reachable.")
+            st.subheader("Kripke state-transition diagram")
+            st.graphviz_chart(kripke_result["graph"])
+            st.subheader("States and atomic propositions")
+            st.dataframe(pd.DataFrame(kripke_result["state_rows"]), width="stretch")
+            st.subheader("Transitions, events and guards")
+            st.dataframe(pd.DataFrame(kripke_result["transition_rows"]), width="stretch")
             st.success(f"HTML graph created: {kripke_result['output']}")
             html = Path(kripke_result["output"]).read_text(encoding="utf-8")
             st.download_button(
@@ -530,6 +684,12 @@ with tabs[5]:
         ]
         st.session_state["generated_state_files"] = generated_files
 
+    if st.button("Generate safe C buffer-copy code", key="generate_safe_c_code"):
+        generated_c_files = CodeGenerator().generate_safe_c_files()
+        st.session_state["generated_safe_c_files"] = [
+            str(path) for path in generated_c_files
+        ]
+
     for generated_file in st.session_state.get("generated_state_files", []):
         st.success(f"Generated: {generated_file}")
         generated_source = Path(generated_file).read_text(encoding="utf-8")
@@ -542,8 +702,25 @@ with tabs[5]:
             key=f"download_{Path(generated_file).name}",
         )
 
+    for generated_file in st.session_state.get("generated_safe_c_files", []):
+        source = Path(generated_file).read_text(encoding="utf-8")
+        st.success(f"Generated safe C artifact: {generated_file}")
+        st.code(source, language="c")
+        st.download_button(
+            f"Download {Path(generated_file).name}",
+            data=source,
+            file_name=Path(generated_file).name,
+            mime="text/x-c",
+            key=f"download_{Path(generated_file).name}",
+        )
+
 with tabs[6]:
     st.header("Static Testing")
+    st.caption(
+        "Ruff and mypy check Python source. C verification runs in the C Security "
+        "Analysis tab: GCC diagnostics, CBMC bounded model checking, Z3/SMT guard "
+        "queries, and ASan/UBSan runtime tests are reported separately."
+    )
     if st.button("Chạy kiểm tra tĩnh", key="run_static_check"):
         st.session_state["static_results"] = [run_ruff(), run_mypy()]
 
@@ -612,8 +789,14 @@ with tabs[8]:
     function_result = st.session_state.get("function_result")
     if function_result:
         function_checks = [
-            value for value in function_result.values() if value in {"PASS", "FAIL"}
+            value
+            for value in function_result.values()
+            if isinstance(value, str) and value in {"PASS", "FAIL"}
         ]
+        function_checks.extend(
+            scenario["Result"]
+            for scenario in function_result.get("Scenarios", [])
+        )
         report_rows.append(
             {
                 "Check": f"{function_result['Function']} scenario",
@@ -662,6 +845,18 @@ with tabs[8]:
                 else "FAIL",
             }
         )
+    generated_safe_c_files = st.session_state.get("generated_safe_c_files", [])
+    if generated_safe_c_files:
+        report_rows.append(
+            {
+                "Check": "Safe C code generation",
+                "Result": (
+                    "PASS"
+                    if all(Path(path).is_file() for path in generated_safe_c_files)
+                    else "FAIL"
+                ),
+            }
+        )
     for result in st.session_state.get("static_results", []):
         report_rows.append(
             {
@@ -684,9 +879,14 @@ with tabs[8]:
 
     if report_rows:
         st.dataframe(pd.DataFrame(report_rows), width="stretch")
+        session_report = {
+            "generated_at": datetime.now().astimezone().isoformat(),
+            "checks": report_rows,
+            "c_analysis": analysis_report,
+        }
         st.download_button(
             "Download session report (JSON)",
-            data=json.dumps(report_rows, indent=2, ensure_ascii=False),
+            data=json.dumps(session_report, indent=2, ensure_ascii=False),
             file_name="softsec_session_report.json",
             mime="application/json",
         )
@@ -696,7 +896,14 @@ with tabs[8]:
 with tabs[9]:
     st.header("C Buffer Security Analysis")
     st.write(
-        "Analyze the vulnerable and corrected memcpy examples with a bounded formal model, GCC diagnostics, optional CBMC, sanitizers, and deterministic mutation fuzzing."
+        "Analyze the vulnerable and corrected memcpy examples with explicit GCC "
+        "static diagnostics, CBMC bounded model checking, Z3/SMT constraints, "
+        "ASan/UBSan runtime tests, bounded black-box tests, and white-box fuzzing."
+    )
+    st.caption(
+        "CBMC checks a bounded C harness; Z3 checks an abstract SMT guard model; "
+        "ASan/UBSan instrument executions; fuzz coverage below counts exercised "
+        "input classes, not source-line coverage."
     )
     st.info("The vulnerable C source is an isolated teaching example. Run it only through this analysis workflow.")
 
@@ -714,11 +921,16 @@ with tabs[9]:
         seed = st.number_input(
             "Reproducible fuzz seed",
             min_value=0,
-            max_value=100000000,
+            max_value=4294967295,
             value=12648430,
             step=1,
             key="fuzz_seed",
         )
+    st.caption(
+        "The seed reproduces the pseudo-random data stream; fixed boundary seed "
+        "inputs (INT_MIN, -1, 0, 1, capacity-1, capacity, capacity+1, INT_MAX) "
+        "are also exercised."
+    )
 
     if st.button("Run end-to-end C analysis", key="run_c_analysis_button"):
         from src.c_analysis.runner import run_c_analysis
@@ -733,18 +945,37 @@ with tabs[9]:
     if analysis_report:
         render_state_diagram(
             "Sơ đồ trạng thái phân tích C",
-            ["Input C", "Compile analysis", "CBMC check", "Sanitizer", "Fuzzing", "Final report"],
             [
-                ("Input C", "Compile analysis", "build"),
-                ("Compile analysis", "CBMC check", "formal"),
-                ("CBMC check", "Sanitizer", "runtime"),
-                ("Sanitizer", "Fuzzing", "explore"),
-                ("Fuzzing", "Final report", "summary"),
+                "Seed input",
+                "GCC + Z3/SMT",
+                "CBMC BMC",
+                "ASan/UBSan",
+                "Black-box bounds",
+                "White-box fuzz",
+                "Report",
+            ],
+            [
+                ("Seed input", "GCC + Z3/SMT", "compile/model"),
+                ("GCC + Z3/SMT", "CBMC BMC", "bounded proof"),
+                ("CBMC BMC", "ASan/UBSan", "runtime check"),
+                ("ASan/UBSan", "Black-box bounds", "CLI input"),
+                ("Black-box bounds", "White-box fuzz", "direct API"),
+                ("White-box fuzz", "Report", "coverage + findings"),
             ],
         )
         st.caption(
             f"Generated at {analysis_report['generated_at']} · Report: {analysis_report['report_path']}"
         )
+        st.download_button(
+            "Download detailed C analysis report (JSON)",
+            data=json.dumps(analysis_report, indent=2, ensure_ascii=False),
+            file_name="c_analysis_report.json",
+            mime="application/json",
+        )
+        fuzzing = analysis_report.get("fuzzing", {})
+        if fuzzing:
+            st.subheader("Fuzz inputs, bounds and coverage")
+            st.json(fuzzing, expanded=True)
         chart_df = pd.DataFrame(
             {
                 "Check": [check["name"] for check in analysis_report["checks"]],
@@ -758,31 +989,54 @@ with tabs[9]:
         )
         st.bar_chart(chart_df.set_index("Check"), height=220)
 
-        for check in analysis_report["checks"]:
-            status = check["status"]
-            message = f"**{check['name']} — {status}:** {check['summary']}"
-            if status == "PASS":
-                st.success(message)
-            elif status == "FINDING":
-                st.warning(message)
-            elif status == "UNAVAILABLE":
-                st.info(message)
-            else:
-                st.error(message)
+        check_groups = (
+            (
+                "Formal and static checks",
+                ("GCC", "CBMC", "Z3", "model"),
+            ),
+            (
+                "Runtime and boundary checks",
+                ("Sanitizer", "Native", "Black-box"),
+            ),
+            (
+                "Fuzzing",
+                ("fuzzing", "mutation"),
+            ),
+        )
+        for group_title, name_terms in check_groups:
+            grouped_checks = [
+                check
+                for check in analysis_report["checks"]
+                if any(term.lower() in check["name"].lower() for term in name_terms)
+            ]
+            st.subheader(group_title)
+            for check in grouped_checks:
+                status = check["status"]
+                message = f"**{check['name']} — {status}:** {check['summary']}"
+                if status == "PASS":
+                    st.success(message)
+                elif status == "FINDING":
+                    st.warning(message)
+                elif status == "UNAVAILABLE":
+                    st.info(message)
+                else:
+                    st.error(message)
 
-            if check["command"]:
-                st.code(check["command"], language="shell")
-            if check["details"]:
-                with st.expander(f"Details: {check['name']}"):
-                    st.code(check["details"])
+                if check["command"]:
+                    st.code(check["command"], language="shell")
+                if check["details"]:
+                    with st.expander(f"Details: {check['name']}"):
+                        st.code(check["details"])
     else:
         st.info("Chưa chạy phân tích C. Bấm nút để xem mô phỏng counterexample, sanitizer và fuzzing.")
         render_state_diagram(
             "Sơ đồ trạng thái chờ chạy",
-            ["Input C", "Compile", "Check", "Report"],
+            ["Seed input", "GCC + Z3/SMT", "CBMC BMC", "ASan/UBSan", "Fuzz", "Report"],
             [
-                ("Input C", "Compile", "queued"),
-                ("Compile", "Check", "pending"),
-                ("Check", "Report", "waiting"),
+                ("Seed input", "GCC + Z3/SMT", "build/model"),
+                ("GCC + Z3/SMT", "CBMC BMC", "formal"),
+                ("CBMC BMC", "ASan/UBSan", "runtime"),
+                ("ASan/UBSan", "Fuzz", "bounded"),
+                ("Fuzz", "Report", "coverage"),
             ],
         )

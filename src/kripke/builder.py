@@ -15,6 +15,7 @@ def build_kripke(function: FunctionSpec) -> KripkeModel:
         model.add_state(
             name=state.name,
             propositions=propositions,
+            description=state.description,
         )
 
     if function.states:
@@ -26,6 +27,7 @@ def build_kripke(function: FunctionSpec) -> KripkeModel:
             source=transition.source,
             target=transition.target,
             label=transition.event,
+            guard=transition.guard,
         )
 
     return model

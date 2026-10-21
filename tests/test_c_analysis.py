@@ -102,6 +102,13 @@ def test_end_to_end_c_analysis_writes_explicit_report(tmp_path):
     assert "destination_capacity=16" in z3_counterexample.details
     assert "CBMC bounded model checking" in statuses
     assert "Sanitizer fuzzing" in statuses
+    assert statuses["Black-box bounded CLI tests"] == "PASS"
+    assert report.fuzzing["black_box"]["coverage"]["cases_passed"] == 9
+    white_box = report.fuzzing["white_box"]
+    assert white_box["seed"] == 12345
+    assert white_box["iterations"] == 64
+    assert white_box["coverage"]["total"] == 64
+    assert white_box["coverage"]["input_classes_covered"] == 5
 
     if statuses["Sanitizer fuzzing"] == "UNAVAILABLE":
         assert statuses["Native dynamic boundary tests"] == "FINDING"

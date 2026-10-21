@@ -44,17 +44,24 @@ def create_pyvis(
         net.add_node(
             state.name,
             label=state.name,
-            title=", ".join(
-                state.propositions
+            title="\n".join(
+                part
+                for part in (
+                    state.description,
+                    ", ".join(sorted(state.propositions)),
+                )
+                if part
             ),
         )
 
     for transition in model.transitions:
-
+        label = transition.label
+        if transition.guard:
+            label += f" [{transition.guard}]"
         net.add_edge(
             transition.source,
             transition.target,
-            label=transition.label,
+            label=label,
         )
 
     net.save_graph(output_file)
