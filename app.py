@@ -8,7 +8,7 @@ import yaml
 from src.constraints.z3_solver import Z3ConstraintEngine
 from src.generation.generator import CodeGenerator
 from src.kripke.builder import build_kripke
-from src.kripke.visualizer import create_pyvis
+from src.kripke.visualizer import create_pyvis, render_graphviz_kripke
 from src.models.states import AuthState
 from src.modules.authentication import AuthenticationModule, LoginParams
 from src.modules.email_notification import (
@@ -242,6 +242,7 @@ tabs = st.tabs(
         "8. Dynamic Testing",
         "9. Report",
         "10. C Security Analysis",
+        "11. Fuzzing Framework",
     ]
 )
 
@@ -331,6 +332,9 @@ with tabs[2]:
                         "State": state.name,
                         "Initial": state.name == model.initial_state,
                         "Reachable": state.name in reachable,
+                        "L(s)": ", ".join(
+                            sorted(ap.name for ap in state.atomic_propositions)
+                        ) or "-",
                         "Description": next(
                             item.description
                             for item in selected_function.states
@@ -343,6 +347,7 @@ with tabs[2]:
                     {
                         "Source": transition.source,
                         "Event": transition.label,
+                        "Guard": transition.guard or "-",
                         "Target": transition.target,
                     }
                     for transition in model.transitions
@@ -354,7 +359,7 @@ with tabs[2]:
         state_result = st.session_state.get("state_result")
         if state_result and state_result["function"] == selected_function.name:
             st.dataframe(pd.DataFrame(state_result["states"]), width="stretch")
-            st.subheader("Transitions")
+            st.subheader("Transitions (R) with Guards")
             st.dataframe(pd.DataFrame(state_result["transitions"]), width="stretch")
             if state_result["errors"]:
                 st.error("\n".join(state_result["errors"]))
@@ -479,20 +484,57 @@ with tabs[3]:
             st.caption("Z3 SAT confirms consistency; it does not prove every input satisfies the requirements.")
 
 with tabs[4]:
-    st.header("Kripke Model")
+    st.header("Kripke Model  K = (S, S_0, R, L)")
+    st.caption(
+        "Formal verification model: S = states, S_0 = initial state, "
+        "R = transition relation with guards, AP = atomic propositions, "
+        "L : S -> 2^AP = labelling function."
+    )
     functions = [function for spec in specifications for function in spec.functions]
     if functions:
         selected_function = select_function(functions, "kripke_function_selector")
         if st.button("Build and validate Kripke model", key="build_kripke_model"):
             analysis = analyze_state_graph(selected_function)
+            kripke_model = analysis["model"]
             output = create_pyvis(
-                analysis["model"],
+                kripke_model,
                 f"reports_{selected_function.name}.html",
             )
+            dot_string = render_graphviz_kripke(kripke_model)
+
+            # Build propositions table: L(s) for each state
+            labelling_rows = []
+            for state in kripke_model.states.values():
+                ap_names = sorted(ap.name for ap in state.atomic_propositions)
+                labelling_rows.append({
+                    "State s": state.name,
+                    "L(s)": "{" + ", ".join(ap_names) + "}" if ap_names else "{}",
+                    "Initial (S_0)": state.name == kripke_model.initial_state,
+                })
+
+            # Build transitions table: R with guards
+            transition_rows = []
+            for t in kripke_model.transitions:
+                transition_rows.append({
+                    "Source": t.source,
+                    "Event": t.label,
+                    "Guard": t.guard or "-",
+                    "Target": t.target,
+                })
+
+            # Build AP registry table
+            ap_rows = [
+                {"Proposition (p)": ap.name, "Description": ap.description}
+                for ap in sorted(kripke_model.atomic_propositions, key=lambda a: a.name)
+            ]
+
             st.session_state["kripke_result"] = {
                 "function": selected_function.name,
-                "states": len(analysis["model"].states),
-                "transitions": len(analysis["model"].transitions),
+                "summary": kripke_model.summary(),
+                "labelling_rows": labelling_rows,
+                "transition_rows": transition_rows,
+                "ap_rows": ap_rows,
+                "dot_string": dot_string,
                 "errors": analysis["errors"],
                 "unreachable": sorted(analysis["unreachable"]),
                 "output": output,
@@ -500,14 +542,40 @@ with tabs[4]:
 
         kripke_result = st.session_state.get("kripke_result")
         if kripke_result and kripke_result["function"] == selected_function.name:
-            st.metric("States", kripke_result["states"])
-            st.metric("Transitions", kripke_result["transitions"])
+            # -- Formal summary metrics ------------------------------------
+            summary = kripke_result["summary"]
+            cols = st.columns(4)
+            cols[0].metric("|S| (States)", summary["|S|"])
+            cols[1].metric("|R| (Transitions)", summary["|R|"])
+            cols[2].metric("|AP| (Propositions)", summary["|AP|"])
+            cols[3].metric("S_0 (Initial)", summary["S_0"])
+
+            # -- Validation ------------------------------------------------
             if kripke_result["errors"]:
                 st.error("\n".join(kripke_result["errors"]))
             elif kripke_result["unreachable"]:
                 st.warning("Unreachable states: " + ", ".join(kripke_result["unreachable"]))
             else:
                 st.success("Kripke model is structurally valid and all states are reachable.")
+
+            # -- Graphviz diagram (with L(s) and Guards) -------------------
+            st.subheader("State Diagram with L(s) and Guards")
+            st.graphviz_chart(kripke_result["dot_string"])
+
+            # -- AP registry -----------------------------------------------
+            st.subheader("Atomic Propositions (AP)")
+            st.dataframe(pd.DataFrame(kripke_result["ap_rows"]), width="stretch")
+
+            # -- Labelling function L(s) -----------------------------------
+            st.subheader("Labelling Function  L : S -> 2^AP")
+            st.dataframe(pd.DataFrame(kripke_result["labelling_rows"]), width="stretch")
+
+            # -- Transitions with guards -----------------------------------
+            st.subheader("Transition Relation  R (with Guards)")
+            st.dataframe(pd.DataFrame(kripke_result["transition_rows"]), width="stretch")
+
+            # -- PyVis download --------------------------------------------
+            st.subheader("Interactive Graph")
             st.success(f"HTML graph created: {kripke_result['output']}")
             html = Path(kripke_result["output"]).read_text(encoding="utf-8")
             st.download_button(
@@ -521,6 +589,9 @@ with tabs[4]:
 
 with tabs[5]:
     st.header("Code Generation")
+
+    # ── Python state enums ────────────────────────────────────────────────
+    st.subheader("🐍 Python State Enums")
     if st.button("Generate state enums", key="generate_state_enums"):
         generator = CodeGenerator()
         generated_files = [
@@ -540,6 +611,103 @@ with tabs[5]:
             file_name=Path(generated_file).name,
             mime="text/x-python",
             key=f"download_{Path(generated_file).name}",
+        )
+
+    st.markdown("---")
+
+    # ── Safe C buffer generation ──────────────────────────────────────────
+    st.subheader("🔒 Safe C Buffer Generation")
+    st.caption(
+        "Generates a pair of C files (.h + .c) that enforce all defensive "
+        "programming rules: NULL-pointer checks, negative-length guards, "
+        "zero-length rejection, strict bounds checking, banned-function "
+        "avoidance, and mandatory NUL-termination."
+    )
+
+    col_c1, col_c2 = st.columns(2)
+    with col_c1:
+        safe_c_file_name = st.text_input(
+            "Base file name (no extension)",
+            value="safe_buffer",
+            key="safe_c_file_name",
+        )
+    with col_c2:
+        safe_c_capacity = st.number_input(
+            "Buffer capacity (bytes)",
+            min_value=1,
+            max_value=65536,
+            value=64,
+            step=1,
+            key="safe_c_capacity",
+        )
+
+    if st.button("Generate Safe C buffer files", key="generate_safe_c"):
+        try:
+            generator = CodeGenerator()
+            safe_c_paths = generator.generate_safe_buffer_c(
+                file_name=safe_c_file_name,
+                buffer_capacity=int(safe_c_capacity),
+                output_dir="generated_c",
+            )
+            st.session_state["safe_c_paths"] = {
+                k: str(v) for k, v in safe_c_paths.items()
+            }
+            st.success(
+                f"Generated: {safe_c_paths['header'].name} + {safe_c_paths['source'].name}"
+            )
+        except (ValueError, OSError) as exc:
+            st.error(f"Code generation failed: {exc}")
+
+    safe_c_paths = st.session_state.get("safe_c_paths", {})
+    if safe_c_paths:
+        for label, path_str in safe_c_paths.items():
+            path_obj = Path(path_str)
+            lang = "c"
+            st.markdown(f"**{label.capitalize()}: `{path_obj.name}`**")
+            content = path_obj.read_text(encoding="utf-8")
+            st.code(content, language=lang)
+            st.download_button(
+                f"Download {path_obj.name}",
+                data=content,
+                file_name=path_obj.name,
+                mime="text/x-csrc",
+                key=f"dl_safe_c_{label}",
+            )
+
+    st.markdown("---")
+
+    # ── Static audit of generated C source ───────────────────────────────
+    st.subheader("🔍 Static Audit of Generated C Source")
+    st.caption(
+        "Checks the generated .c file for banned functions "
+        "(strcpy, strcat, sprintf, gets) and verifies safe alternatives are used."
+    )
+    if st.button("Run static audit on generated C", key="run_safe_c_audit"):
+        safe_c_paths = st.session_state.get("safe_c_paths", {})
+        if "source" not in safe_c_paths:
+            st.warning("Generate Safe C buffer files first.")
+        else:
+            try:
+                generator = CodeGenerator()
+                audit = generator.audit_c_source(Path(safe_c_paths["source"]))
+                st.session_state["safe_c_audit"] = audit
+            except (FileNotFoundError, OSError) as exc:
+                st.error(f"Audit failed: {exc}")
+
+    audit_result = st.session_state.get("safe_c_audit")
+    if audit_result:
+        if audit_result["passed"]:
+            st.success(audit_result["details"])
+        else:
+            st.error(audit_result["details"])
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {"Category": "Banned functions found", "Items": ", ".join(audit_result["banned_found"]) or "—"},
+                    {"Category": "Safe patterns detected", "Items": ", ".join(audit_result["safe_present"]) or "—"},
+                ]
+            ),
+            width="stretch",
         )
 
 with tabs[6]:
@@ -786,3 +954,175 @@ with tabs[9]:
                 ("Check", "Report", "waiting"),
             ],
         )
+
+    st.markdown("---")
+    st.subheader("⚖️ So sánh 4 Phương pháp Kiểm chứng (Verification Matrix)")
+    st.caption(
+        "Làm rõ sự khác biệt giữa Static Analysis, SMT Checking, Bounded Model Checking (BMC), "
+        "và Dynamic Sanitizers trên cùng ca kiểm thử buffer_copy(len=-1):"
+    )
+    from src.verification.comparator import generate_comparison_dataframe
+    comp_df = generate_comparison_dataframe(case_study=True)
+    st.dataframe(comp_df, width="stretch")
+
+with tabs[10]:
+    st.header("🛡️ Fuzzing Framework (Blackbox & Whitebox ASan)")
+    st.caption(
+        "Khung kiểm thử Fuzzing đa phương pháp: Quản lý Seed corpus, Biến dị payload (Mutation Engine), "
+        "Đo độ phủ (Coverage Metric), Thu nhỏ phản mẫu (Crash Minimization), và Trực quan hóa luồng thực thi (Execution Flow Trace)."
+    )
+
+    from src.testing.fuzzing import Fuzzer, FuzzingMode, load_seeds
+
+    # Seed management section
+    with st.expander("📁 Seed Data Management (csrc/fuzz_seeds/)", expanded=False):
+        st.write("Dữ liệu hạt giống đầu vào (Corpus Seeds) phục vụ quá trình biến đổi payload:")
+        seeds_catalog = []
+        seed_dir = Path("csrc/fuzz_seeds")
+        if seed_dir.exists():
+            for s_file in sorted(seed_dir.glob("*.txt")):
+                content = s_file.read_bytes()
+                seeds_catalog.append({
+                    "Seed File": s_file.name,
+                    "Size (bytes)": len(content),
+                    "Preview (Repr)": repr(content[:40]),
+                    "Hex": content[:16].hex(),
+                })
+        if seeds_catalog:
+            st.dataframe(pd.DataFrame(seeds_catalog), width="stretch")
+        else:
+            st.info("Chưa tìm thấy tệp seed. Đang sử dụng seed mặc định.")
+
+    # Configuration columns
+    col_t, col_m, col_i, col_s = st.columns(4)
+    with col_t:
+        fuzz_target = st.selectbox(
+            "Mục tiêu kiểm thử (Target)",
+            options=["vulnerable", "safe"],
+            format_func=lambda x: f"buffer_copy ({x})",
+            key="fuzz_target_select",
+        )
+    with col_m:
+        fuzz_mode_choice = st.selectbox(
+            "Chế độ Fuzzing (Mode)",
+            options=[FuzzingMode.WHITEBOX, FuzzingMode.BLACKBOX],
+            format_func=lambda m: m.value,
+            key="fuzz_mode_select",
+        )
+    with col_i:
+        fuzz_iterations = st.slider(
+            "Số lần lặp (Iterations)",
+            min_value=10,
+            max_value=500,
+            value=50,
+            step=10,
+            key="fuzz_iter_slider",
+        )
+    with col_s:
+        fuzz_seed_num = st.number_input(
+            "Seed ngẫu nhiên",
+            min_value=1,
+            max_value=999999,
+            value=42,
+            step=1,
+            key="fuzz_seed_input",
+        )
+
+    if st.button("🚀 Run Fuzzing Campaign", key="run_fuzzing_button"):
+        with st.spinner("Đang chạy chiến dịch Fuzzing và phân tích luồng vi phạm..."):
+            fuzzer = Fuzzer(seed=int(fuzz_seed_num))
+            report = fuzzer.fuzz_c_target(
+                implementation=fuzz_target,
+                mode=fuzz_mode_choice,
+                iterations=int(fuzz_iterations),
+            )
+            st.session_state["fuzzing_report"] = report
+
+    report = st.session_state.get("fuzzing_report")
+    if report:
+        st.markdown("---")
+        # 1. Metric Cards
+        m1, m2, m3, m4, m5 = st.columns(5)
+        m1.metric("Total Executions", report.total_executions)
+        m2.metric("Branch Coverage", f"{report.coverage_percent:.1f}%")
+        m3.metric("Unique Crashes", report.unique_crashes)
+        m4.metric("Hangs / Timeouts", report.hangs)
+        m5.metric("Duration", f"{report.execution_time_seconds:.2f}s")
+
+        # 2. Execution Flow / Trace Diagram
+        st.subheader("🗺️ Execution Flow / Trace Diagram")
+        st.caption("Sơ đồ luồng thực thi từ hạt giống (Seed) qua Biến dị (Mutation) đến Ranh giới kiểm tra và Kết quả:")
+        st.graphviz_chart(report.execution_trace_dot)
+
+        # 3. Coverage Timeline Chart
+        if report.coverage_timeline:
+            st.subheader("📈 Coverage Metric Timeline")
+            st.caption("Độ phủ mã nguồn (Branch Coverage %) gia tăng theo số lần đột biến payload:")
+            cov_df = pd.DataFrame(
+                report.coverage_timeline,
+                columns=["Iteration", "Coverage %"],
+            ).set_index("Iteration")
+            st.line_chart(cov_df, height=200)
+
+        # 4. Discovered Crashes & Minimisation
+        st.subheader("💥 Discovered Crashes & Minimised Payloads")
+        if report.crashes:
+            st.warning(f"Phát hiện {report.unique_crashes} điểm sập (Crash / ASan Fault) tiềm ẩn nguy cơ bảo mật!")
+            crash_rows = []
+            for c in report.crashes:
+                crash_rows.append({
+                    "Error Type": c.error_type,
+                    "Exit Code": c.exit_code,
+                    "Original Payload": c.input_repr,
+                    "Minimised Crash Payload": c.minimised_payload or c.input_repr,
+                    "Hex": c.input_hex[:24] + "...",
+                    "Sanitizer Triggered": "YES" if c.sanitizer_finding else "NO",
+                    "Latency (ms)": f"{c.execution_time_ms:.2f}",
+                })
+            st.dataframe(pd.DataFrame(crash_rows), width="stretch")
+
+            for idx, c in enumerate(report.crashes):
+                with st.expander(f"Trace Details: {c.error_type} (Exit {c.exit_code})"):
+                    st.code(c.details or "No standard error dump captured.")
+        else:
+            st.success("Không phát hiện lỗi sập hoặc vi phạm bộ nhớ trong chiến dịch Fuzzing này. Mục tiêu an toàn với các payload đã thử!")
+
+        # 5. Remediation Suggestions
+        if report.remediation_suggestions:
+            st.subheader("💡 Đề xuất Vá lỗi & Phòng thủ (Remediation)")
+            for s_idx, sug in enumerate(report.remediation_suggestions, start=1):
+                st.markdown(f"**{s_idx}.** {sug}")
+
+        # 6. Export Reporting
+        st.markdown("---")
+        st.subheader("📄 Xuất Báo cáo Fuzzing (Export Fuzzing Report)")
+        rep_json = json.dumps(report.to_dict(), indent=2, ensure_ascii=False)
+        rep_temp = Path("reports/temp_fuzz.md")
+        rep_md_str = ""
+        try:
+            report.export_markdown(rep_temp)
+            rep_md_str = rep_temp.read_text(encoding="utf-8")
+        except Exception:
+            rep_md_str = f"# Fuzzing Report: {report.target}\nExecutions: {report.total_executions}"
+
+        col_d1, col_d2 = st.columns(2)
+        with col_d1:
+            st.download_button(
+                "📥 Export Fuzzing Report (Markdown)",
+                data=rep_md_str,
+                file_name=f"fuzzing_report_{report.target.replace(' ', '_')}.md",
+                mime="text/markdown",
+                key="download_fuzz_md",
+            )
+        with col_d2:
+            st.download_button(
+                "📥 Export Fuzzing Report (JSON)",
+                data=rep_json,
+                file_name=f"fuzzing_report_{report.target.replace(' ', '_')}.json",
+                mime="application/json",
+                key="download_fuzz_json",
+            )
+    else:
+        st.info("Chưa chạy Fuzzing. Hãy chọn tham số và bấm **'🚀 Run Fuzzing Campaign'** để bắt đầu.")
+
+

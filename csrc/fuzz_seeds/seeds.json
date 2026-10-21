@@ -1,0 +1,58 @@
+{
+  "seeds": [
+    {
+      "name": "seed_empty",
+      "file": "seed_empty.txt",
+      "category": "boundary",
+      "description": "Empty payload (0 bytes) to test null/zero length handling"
+    },
+    {
+      "name": "seed_boundary_n_minus_1",
+      "file": "seed_boundary_n_minus_1.txt",
+      "category": "boundary",
+      "description": "Buffer boundary length N-1 (63 bytes) for 64-byte buffer"
+    },
+    {
+      "name": "seed_boundary_n",
+      "file": "seed_boundary_n.txt",
+      "category": "boundary",
+      "description": "Buffer exact boundary length N (64 bytes)"
+    },
+    {
+      "name": "seed_boundary_n_plus_1",
+      "file": "seed_boundary_n_plus_1.txt",
+      "category": "boundary",
+      "description": "Buffer off-by-one boundary length N+1 (65 bytes)"
+    },
+    {
+      "name": "seed_overflow_large",
+      "file": "seed_overflow_large.txt",
+      "category": "overflow",
+      "description": "Large 256-byte string to trigger buffer overflow"
+    },
+    {
+      "name": "seed_unicode",
+      "file": "seed_unicode.txt",
+      "category": "encoding",
+      "description": "Multi-byte UTF-8 glyphs, zero-width joiners, and emoji"
+    },
+    {
+      "name": "seed_format_string",
+      "file": "seed_format_string.txt",
+      "category": "format_string",
+      "description": "Format string specifiers %x%s%n%p to test string parsing"
+    },
+    {
+      "name": "seed_null_byte",
+      "file": "seed_null_byte.txt",
+      "category": "null_byte",
+      "description": "Embedded null byte in middle of string"
+    },
+    {
+      "name": "seed_negative_number",
+      "file": "seed_negative_number.txt",
+      "category": "integer_overflow",
+      "description": "Negative signed integer -1 triggering 32-to-64 bit conversion"
+    }
+  ]
+}

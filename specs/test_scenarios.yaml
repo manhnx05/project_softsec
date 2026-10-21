@@ -1,0 +1,215 @@
+# LMS End-to-End Software Security - Test Scenario Matrix
+# Ma trận Kịch bản Kiểm thử Cấp độ Logic / Máy trạng thái và Cấp độ Bộ nhớ C
+
+version: "1.0"
+description: "Comprehensive Test Scenario Matrix covering Business Logic State Transitions and C Memory Safety"
+
+scenarios:
+  # =========================================================================
+  # 1. KỊCH BẢN KIỂM THỬ CẤP ĐỘ LOGIC / MÁY TRẠNG THÁI (BUSINESS LOGIC & STATE MACHINE)
+  # =========================================================================
+
+  - id: "TS-LOGIC-AUTH-001"
+    title: "Account Locking After Consecutive Failed Login Attempts"
+    level: "Logic"
+    pre_conditions:
+      - "User account is registered in LMS authentication repository."
+      - "Initial user state is LOGGED_OUT."
+      - "Parameter max_attempts is set to 3."
+      - "failed_attempts counter is 0."
+    inputs:
+      username: "student_user"
+      attempts:
+        - attempt: 1
+          password: "wrong_password_1"
+        - attempt: 2
+          password: "wrong_password_2"
+        - attempt: 3
+          password: "wrong_password_3"
+        - attempt: 4
+          password: "correct_password_123"
+    expected_output:
+      after_attempt_1:
+        session: null
+        state: "LOGIN_FAILED"
+        failed_attempts: 1
+      after_attempt_2:
+        session: null
+        state: "LOGIN_FAILED"
+        failed_attempts: 2
+      after_attempt_3:
+        session: null
+        state: "LOCKED"
+        failed_attempts: 3
+      after_attempt_4:
+        session: null
+        state: "LOCKED"
+        login_allowed: false
+    hazard_type: "CWE-307: Improper Restriction of Excessive Authentication Attempts (Brute Force)"
+
+  - id: "TS-LOGIC-EMAIL-001"
+    title: "Email Delivery Failure Retry and Max Retries Exhaustion"
+    level: "Logic"
+    pre_conditions:
+      - "Notification message is created with valid recipient format."
+      - "Initial notification state is QUEUED."
+      - "Parameter max_retry is configured to 2."
+      - "retry_count is initialized to 0."
+      - "SMTP transport is configured to simulate network/delivery failure."
+    inputs:
+      recipient: "learner@university.edu"
+      subject: "Course Security Update"
+      body: "Security alert regarding your account"
+      max_retry: 2
+      send_attempts: 4
+    expected_output:
+      send_failure_1:
+        result: false
+        retry_count: 1
+        state: "QUEUED"
+      send_failure_2:
+        result: false
+        retry_count: 2
+        state: "QUEUED"
+      send_failure_3:
+        result: false
+        retry_count: 3
+        state: "FAILED"
+      subsequent_sends:
+        result: false
+        state: "FAILED"
+        retry_allowed: false
+    hazard_type: "CWE-834: Excessive Iteration / CWE-400: Uncontrolled Resource Consumption (Infinite Retry Loop)"
+
+  - id: "TS-LOGIC-RBAC-001"
+    title: "RBAC Illegal State Transition Bypass (Skipping STEP_VERIFY to APPROVED)"
+    level: "Logic"
+    pre_conditions:
+      - "Approval workflow (course enrollment/credential verification) initialized."
+      - "Current state is PENDING."
+      - "Mandatory multi-step verification policy: PENDING -> STEP_VERIFY -> APPROVED."
+      - "Role STUDENT has no authorization to approve or bypass verification steps."
+      - "Role AUDITOR/ADMIN is required to perform STEP_VERIFY and final approval."
+    inputs:
+      target_request_id: "REQ-SEC-2026-001"
+      attempt_unauthorized_bypass:
+        actor_role: "STUDENT"
+        event: "approve"
+        from_state: "PENDING"
+        to_state: "APPROVED"
+      attempt_unauthorized_verify:
+        actor_role: "STUDENT"
+        event: "step_verify"
+      authorized_workflow:
+        auditor_role: "AUDITOR"
+        admin_role: "ADMIN"
+    expected_output:
+      bypass_attempt:
+        success: false
+        current_state: "PENDING"
+        error: "ILLEGAL_STATE_TRANSITION"
+        description: "Direct jump from PENDING to APPROVED is blocked; STEP_VERIFY cannot be bypassed."
+      unauthorized_verify_attempt:
+        success: false
+        error: "PERMISSION_DENIED"
+      authorized_progression:
+        step_1: "PENDING -> STEP_VERIFY (auditor verified)"
+        step_2: "STEP_VERIFY -> APPROVED (admin approved)"
+        final_state: "APPROVED"
+    hazard_type: "CWE-841: Improper Enforcement of Behavioral Workflow / CWE-285: Improper Authorization"
+
+
+  # =========================================================================
+  # 2. KỊCH BẢN KIỂM THỬ CẤP ĐỘ BỘ NHỚ C (MEMORY SAFETY)
+  # =========================================================================
+
+  - id: "TS-MEM-BOF-001"
+    title: "Buffer Overflow via Unbounded Length and Signed-to-Unsigned Conversion"
+    level: "Memory"
+    pre_conditions:
+      - "Destination buffer allocated with fixed capacity BUFFER_COPY_CAPACITY (16 bytes)."
+      - "Source buffer initialized with arbitrary valid byte sequence."
+    inputs:
+      overlong_length: 32
+      negative_length: -1
+      destination_capacity: 16
+      source_size: 16
+    expected_output:
+      vulnerable_implementation:
+        negative_length_handling: "Bypasses (length > dest_capacity) check; -1 converts to (size_t)4294967295."
+        result: "FINDING"
+        vulnerability: "Massive memcpy buffer overflow / Memory corruption."
+      safe_implementation:
+        negative_length_handling: "Rejected with BUFFER_COPY_NEGATIVE_LENGTH (-2)."
+        overlong_handling: "Rejected with BUFFER_COPY_OUT_OF_RANGE (-3)."
+        result: "PASS"
+        memory_safety: "No destination overflow occurs."
+    hazard_type: "CWE-120: Buffer Copy without Checking Size of Input / CWE-195: Signed to Unsigned Conversion Error"
+
+  - id: "TS-MEM-OBO-001"
+    title: "Off-by-One Boundary Memory Overwrite"
+    level: "Memory"
+    pre_conditions:
+      - "Destination buffer capacity BUFFER_COPY_CAPACITY is exactly 16 bytes."
+      - "Source buffer size is 17 bytes."
+    inputs:
+      length: 17
+      source_size: 17
+      destination_capacity: 16
+    expected_output:
+      safe_implementation:
+        return_code: -3
+        status: "BUFFER_COPY_OUT_OF_RANGE"
+        copied: false
+        description: "Exact 1-byte overflow strictly detected and rejected."
+      model_evaluation:
+        violations:
+          - "copy length exceeds destination buffer capacity"
+    hazard_type: "CWE-193: Off-by-one Error (1-byte memory write beyond allocated boundary)"
+
+  - id: "TS-MEM-OOB-001"
+    title: "Out-of-bounds Read/Write when Length Exceeds Source Buffer Size"
+    level: "Memory"
+    pre_conditions:
+      - "Source buffer allocated with size smaller than destination capacity (source_size = 8)."
+      - "Destination buffer has capacity 16 bytes."
+    inputs:
+      length: 12
+      source_size: 8
+      destination_capacity: 16
+    expected_output:
+      vulnerable_implementation:
+        behavior: "Ignored source_size; guard only checked length <= 16; read 4 uninitialized/out-of-bounds bytes."
+        hazard: "Information disclosure / Out-of-bounds heap/stack read."
+      safe_implementation:
+        return_code: -3
+        status: "BUFFER_COPY_OUT_OF_RANGE"
+        copied: false
+        description: "Strict guard validates length <= source_size AND length <= destination_capacity."
+    hazard_type: "CWE-125: Out-of-bounds Read / CWE-787: Out-of-bounds Write"
+
+  - id: "TS-MEM-NULL-001"
+    title: "Null Pointer Dereference Handling for Source and Destination Buffers"
+    level: "Memory"
+    pre_conditions:
+      - "C buffer copy entrypoint invoked with one or more NULL pointer arguments."
+    inputs:
+      cases:
+        - name: "null_source"
+          source: null
+          destination: "valid_pointer"
+          length: 8
+        - name: "null_destination"
+          source: "valid_pointer"
+          destination: null
+          length: 8
+        - name: "both_null"
+          source: null
+          destination: null
+          length: 8
+    expected_output:
+      return_code: -1
+      status: "BUFFER_COPY_INVALID_ARGUMENT"
+      copied: false
+      system_stability: "Safe early-exit without SIGSEGV / Null Pointer Dereference."
+    hazard_type: "CWE-476: NULL Pointer Dereference"

@@ -50,3 +50,13 @@ class ProjectSpec(BaseModel):
     functions: list[FunctionSpec] = Field(
         default_factory=list
     )
+
+
+class TestScenarioSpec(BaseModel):
+    id: str
+    title: str
+    level: str
+    pre_conditions: list[str] | str | None = None
+    inputs: dict[str, object] | list[object] | str | None = None
+    expected_output: dict[str, object] | list[object] | str | None = None
+    hazard_type: str = ""

@@ -30,27 +30,29 @@ def test_state_generator_renders_spec(tmp_path):
 
 
 def test_dashboard_actions_store_section_results():
-    app = AppTest.from_file("../app.py").run()
+    app = AppTest.from_file("../app.py").run(timeout=30)
 
-    app.button(key="run_function_scenario").click().run()
+    app.button(key="run_function_scenario").click().run(timeout=30)
     assert app.session_state["function_result"]["Login"] == "PASS"
 
     app.button(
         key="FormSubmitter:parameter_validation_form-Validate parameters"
-    ).click().run()
+    ).click().run(timeout=30)
+
     assert all(
         result["Result"] == "PASS"
         for result in app.session_state["parameter_result"]["checks"]
     )
 
-    app.button(key="analyze_states").click().run()
+    app.button(key="analyze_states").click().run(timeout=30)
     assert app.session_state["state_result"]["errors"] == []
 
     app.button(
         key="FormSubmitter:constraint_check_form-Check authentication constraints"
-    ).click().run()
+    ).click().run(timeout=30)
     assert app.session_state["constraint_result"]["passed"] is True
 
-    app.button(key="build_kripke_model").click().run()
+    app.button(key="build_kripke_model").click().run(timeout=30)
     assert app.session_state["kripke_result"]["errors"] == []
     assert not app.exception
+

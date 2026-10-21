@@ -347,7 +347,67 @@ def _run_gcc_analysis(
         )
 
 
-def _run_cbmc(report: AnalysisReport) -> None:
+def _extract_cbmc_trace(output: str) -> str:
+    """Extract step-by-step counterexample trace and violated property from CBMC output."""
+    trace_lines = []
+    capture = False
+    for line in output.splitlines():
+        line_stripped = line.strip()
+        if "Violated property:" in line or "FAILURE:" in line or "[assertion" in line:
+            trace_lines.append(f"Property Violated: {line_stripped}")
+            capture = True
+        elif capture and ("State " in line or "assignment" in line or "file " in line or "line " in line or "function " in line):
+            trace_lines.append(line_stripped)
+        elif capture and line_stripped.startswith("VERIFICATION FAILED"):
+            trace_lines.append(line_stripped)
+            break
+    if trace_lines:
+        return "\n".join(trace_lines[:30])
+    return output[:2000] if len(output) > 2000 else output
+
+
+def _run_cppcheck(report: AnalysisReport) -> None:
+    cppcheck = shutil.which("cppcheck")
+    if cppcheck is None:
+        return
+
+    for implementation in ("vulnerable", "safe"):
+        source = C_ROOT / implementation / "buffer_copy.c"
+        command = [
+            cppcheck,
+            "--enable=all",
+            "--inconclusive",
+            "-I",
+            str(C_ROOT / "include"),
+            str(source),
+        ]
+        return_code, stdout, stderr, error = _run_command(command, timeout_seconds=30)
+        output = "\n".join(part for part in (stdout, stderr) if part).strip()
+        if error:
+            status: CheckStatus = "ERROR"
+            summary = error
+        elif "error:" in output.lower():
+            status = "FINDING"
+            summary = f"Cppcheck found errors in {implementation} implementation."
+        elif "warning:" in output.lower() or "style:" in output.lower():
+            status = "FINDING"
+            summary = f"Cppcheck reported diagnostics in {implementation} implementation."
+        else:
+            status = "PASS"
+            summary = f"Cppcheck reported no issues for {implementation} implementation."
+
+        report.checks.append(
+            CheckResult(
+                name=f"Cppcheck static analysis ({implementation})",
+                status=status,
+                summary=summary,
+                command=_format_command(command),
+                details=output,
+            )
+        )
+
+
+def _run_cbmc(report: AnalysisReport, unwind_depth: int = 10) -> None:
     cbmc = shutil.which("cbmc")
     if cbmc is None:
         report.checks.append(
@@ -376,6 +436,8 @@ def _run_cbmc(report: AnalysisReport) -> None:
             "--bounds-check",
             "--pointer-check",
             "--signed-overflow-check",
+            "--unwind",
+            str(unwind_depth),
             "--trace",
         ]
         return_code, stdout, stderr, error = _run_command(
@@ -388,10 +450,15 @@ def _run_cbmc(report: AnalysisReport) -> None:
             summary = error
         elif "VERIFICATION FAILED" in output:
             status = "FINDING"
-            summary = f"CBMC found a counterexample in the {implementation} implementation."
+            trace_extract = _extract_cbmc_trace(output)
+            summary = (
+                f"CBMC found a counterexample in the {implementation} implementation "
+                f"(unwind={unwind_depth})."
+            )
+            output = f"Counterexample Trace:\n{trace_extract}\n\nFull Output:\n{output}"
         elif "VERIFICATION SUCCESSFUL" in output:
             status = "PASS"
-            summary = f"CBMC verified the {implementation} harness."
+            summary = f"CBMC verified the {implementation} harness (unwind={unwind_depth})."
         else:
             status = "ERROR"
             summary = f"CBMC exited with status {return_code} without a recognized result."
@@ -445,7 +512,7 @@ def _compile(
         str(C_ROOT / "include"),
     ]
     if sanitizer:
-        command.extend(("-fsanitize=address,undefined", "-fno-omit-frame-pointer"))
+        command.extend(("-fsanitize=address,undefined", "-g", "-fno-omit-frame-pointer"))
     command.extend(str(source) for source in source_files)
     command.extend(("-o", str(output_path)))
     return command, *_run_command(command)
@@ -778,6 +845,7 @@ def run_c_analysis(
     iterations: int = 10_000,
     seed: int = 0xC0FFEE,
     report_path: Path = REPORT_PATH,
+    cbmc_unwind: int = 10,
 ) -> AnalysisReport:
     """Run model, compiler, BMC, sanitizer, and fuzz checks and save a report."""
     if not 1 <= iterations <= 1_000_000:
@@ -793,7 +861,8 @@ def run_c_analysis(
     with tempfile.TemporaryDirectory(prefix="lms-c-analysis-") as temporary_dir:
         work_dir = Path(temporary_dir)
         _run_gcc_analysis(report, compiler, work_dir)
-        _run_cbmc(report)
+        _run_cppcheck(report)
+        _run_cbmc(report, unwind_depth=cbmc_unwind)
         _run_dynamic_analysis(report, compiler, work_dir)
         _run_fuzzing(report, compiler, work_dir, iterations, seed)
 
