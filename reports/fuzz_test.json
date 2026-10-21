@@ -1,0 +1,69 @@
+{
+  "target": "C buffer_copy (vulnerable)",
+  "mode": "Whitebox (ASan / Coverage-Guided Memory Auditing)",
+  "total_executions": 20,
+  "coverage_percent": 66.67,
+  "unique_crashes": 1,
+  "hangs": 0,
+  "execution_time_seconds": 2.202,
+  "crashes": [
+    {
+      "input_repr": "b'-1'",
+      "input_hex": "2d31",
+      "exit_code": 3221225477,
+      "error_type": "Segmentation Fault / Access Violation",
+      "details": "Process crashed with exit code 3221225477",
+      "minimised_payload": "b'-'",
+      "sanitizer_finding": false,
+      "execution_time_ms": 100.00085830688477
+    }
+  ],
+  "remediation_suggestions": [
+    "Enforce strict lower and upper bounds checks: `if (length < 0 || length > dest_capacity) return ERROR;`",
+    "Replace unrestricted `memcpy` with length-bounded `safe_buffer_copy` and verify null-termination `dest[size-1] = '\\0'`",
+    "Validate unsigned type casting to prevent signed negative conversion (`int` to `size_t` wrapping)",
+    "Compile with `-fsanitize=address,undefined` in continuous integration to prevent silent heap/stack corruptions"
+  ],
+  "coverage_timeline": [
+    [
+      2,
+      8.333333333333332
+    ],
+    [
+      4,
+      25.0
+    ],
+    [
+      6,
+      50.0
+    ],
+    [
+      8,
+      66.66666666666666
+    ],
+    [
+      10,
+      66.66666666666666
+    ],
+    [
+      12,
+      66.66666666666666
+    ],
+    [
+      14,
+      66.66666666666666
+    ],
+    [
+      16,
+      66.66666666666666
+    ],
+    [
+      18,
+      66.66666666666666
+    ],
+    [
+      20,
+      66.66666666666666
+    ]
+  ]
+}
