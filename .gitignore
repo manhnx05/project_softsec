@@ -6,6 +6,9 @@ dist/
 wheels/
 *.egg-info
 .pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
 
 # Virtual environments
 .venv
@@ -16,6 +19,7 @@ wheels/
 !.env.example
 reports_*.html
 reports/c_analysis/
+reports/fuzzing/
 generated/
 *.exe
 *.o

@@ -1,98 +1,11 @@
-from dataclasses import dataclass, field
+"""Kripke models for the LMS workflows.
 
-# =============================================================
-# KRIPKE STATE
-# =============================================================
+This module builds Kripke structures on top of the single canonical
+``src.kripke.model.KripkeModel`` definition so the UI, tests, and
+verification code all share one representation.
+"""
 
-@dataclass
-class KripkeState:
-
-    name: str
-
-    propositions: set[str] = field(
-        default_factory=set
-    )
-
-
-# =============================================================
-# KRIPKE MODEL
-# =============================================================
-
-@dataclass
-class KripkeModel:
-
-    states: dict[str, KripkeState]
-
-    transitions: dict[str, set[str]]
-
-    initial: str
-
-    # =========================================================
-    # SUCCESSORS
-    # =========================================================
-
-    def successors(
-        self,
-        state: str
-    ) -> set[str]:
-
-        return self.transitions.get(
-            state,
-            set()
-        )
-
-    # =========================================================
-    # CHECK STATE
-    # =========================================================
-
-    def has_state(
-        self,
-        state: str
-    ) -> bool:
-
-        return state in self.states
-
-    # =========================================================
-    # VALIDATE KRIPKE
-    # =========================================================
-
-    def validate(self) -> list[str]:
-
-        errors = []
-
-        # Kiểm tra initial state
-
-        if not self.has_state(
-            self.initial
-        ):
-
-            errors.append(
-                f"Initial state "
-                f"'{self.initial}' không tồn tại."
-            )
-
-        # Kiểm tra transitions
-
-        for source, targets in self.transitions.items():
-
-            if not self.has_state(source):
-
-                errors.append(
-                    f"Transition source "
-                    f"'{source}' không tồn tại."
-                )
-
-            for target in targets:
-
-                if not self.has_state(target):
-
-                    errors.append(
-                        f"Transition target "
-                        f"'{target}' không tồn tại."
-                    )
-
-        return errors
-
+from src.kripke.model import KripkeModel
 
 # =============================================================
 # AUTHENTICATION KRIPKE
@@ -100,68 +13,64 @@ class KripkeModel:
 
 def build_auth_kripke() -> KripkeModel:
 
-    states = {
+    model = KripkeModel()
 
-        "LOGGED_OUT": KripkeState(
-            "LOGGED_OUT",
-            {
-                "not_authenticated"
-            }
-        ),
-
-        "LOGIN_FAILED": KripkeState(
-            "LOGIN_FAILED",
-            {
-                "authentication_failed"
-            }
-        ),
-
-        "LOGGED_IN": KripkeState(
-            "LOGGED_IN",
-            {
-                "authenticated",
-                "session_valid"
-            }
-        ),
-
-        "LOCKED": KripkeState(
-            "LOCKED",
-            {
-                "account_locked"
-            }
-        )
-    }
-
-    transitions = {
-
-        "LOGGED_OUT": {
-            "LOGGED_IN",
-            "LOGIN_FAILED"
-        },
-
-        "LOGIN_FAILED": {
-            "LOGGED_IN",
-            "LOGIN_FAILED",
-            "LOCKED"
-        },
-
-        "LOGGED_IN": {
-            "LOGGED_OUT"
-        },
-
-        "LOCKED": {
-            "LOGGED_OUT"
-        }
-    }
-
-    return KripkeModel(
-
-        states=states,
-
-        transitions=transitions,
-
-        initial="LOGGED_OUT"
+    model.add_state(
+        "LOGGED_OUT",
+        {"not_authenticated"},
     )
+    model.add_state(
+        "LOGIN_FAILED",
+        {"authentication_failed"},
+    )
+    model.add_state(
+        "LOGGED_IN",
+        {"authenticated", "session_valid"},
+    )
+    model.add_state(
+        "LOCKED",
+        {"account_locked"},
+    )
+
+    model.add_transition(
+        "LOGGED_OUT",
+        "LOGGED_IN",
+        "correct_password",
+    )
+    model.add_transition(
+        "LOGGED_OUT",
+        "LOGIN_FAILED",
+        "wrong_password",
+    )
+    model.add_transition(
+        "LOGIN_FAILED",
+        "LOGIN_FAILED",
+        "wrong_password",
+    )
+    model.add_transition(
+        "LOGIN_FAILED",
+        "LOGGED_IN",
+        "correct_password",
+    )
+    model.add_transition(
+        "LOGIN_FAILED",
+        "LOCKED",
+        "max_attempts",
+    )
+    model.add_transition(
+        "LOGGED_IN",
+        "LOGGED_OUT",
+        "logout",
+    )
+    model.add_transition(
+        "LOCKED",
+        "LOGGED_OUT",
+        "reset_lock",
+    )
+
+    model.initial_state = "LOGGED_OUT"
+
+    return model
 
 
 # =============================================================
@@ -170,63 +79,25 @@ def build_auth_kripke() -> KripkeModel:
 
 def build_email_kripke() -> KripkeModel:
 
-    states = {
+    model = KripkeModel()
 
-        "IDLE": KripkeState(
-            "IDLE",
-            {
-                "not_queued"
-            }
-        ),
+    model.add_state("IDLE", {"not_queued"})
+    model.add_state("QUEUED", {"queued"})
+    model.add_state("SENT", {"sent"})
+    model.add_state("FAILED", {"failed"})
 
-        "QUEUED": KripkeState(
-            "QUEUED",
-            {
-                "queued"
-            }
-        ),
-
-        "SENT": KripkeState(
-            "SENT",
-            {
-                "sent"
-            }
-        ),
-
-        "FAILED": KripkeState(
-            "FAILED",
-            {
-                "failed"
-            }
-        )
-    }
-
-    transitions = {
-
-        "IDLE": {
-            "QUEUED"
-        },
-
-        "QUEUED": {
-            "SENT",
-            "FAILED"
-        },
-
-        "FAILED": {
-            "QUEUED"
-        },
-
-        "SENT": set()
-    }
-
-    return KripkeModel(
-
-        states=states,
-
-        transitions=transitions,
-
-        initial="IDLE"
+    model.add_transition("IDLE", "QUEUED", "enqueue")
+    model.add_transition(
+        "QUEUED", "SENT", "send_success"
     )
+    model.add_transition(
+        "QUEUED", "FAILED", "send_failure"
+    )
+    model.add_transition("FAILED", "QUEUED", "retry")
+
+    model.initial_state = "IDLE"
+
+    return model
 
 
 # =============================================================
@@ -235,69 +106,42 @@ def build_email_kripke() -> KripkeModel:
 
 def print_kripke(
     model: KripkeModel,
-    title: str
+    title: str,
 ):
+    print(f"\n===== {title} =====")
 
-    print(
-        f"\n===== {title} ====="
-    )
-
-    print(
-        f"Initial state: "
-        f"{model.initial}"
-    )
-
-    # ---------------------------------------------------------
-    # STATES
-    # ---------------------------------------------------------
+    print(f"Initial state: {model.initial_state}")
 
     print("\nStates:")
 
     for name, state in model.states.items():
 
         props = ", ".join(
-            sorted(
-                state.propositions
-            )
+            sorted(state.propositions)
         )
 
-        print(
-            f"  {name}: "
-            f"{{{props}}}"
-        )
-
-    # ---------------------------------------------------------
-    # TRANSITIONS
-    # ---------------------------------------------------------
+        print(f"  {name}: {{{props}}}")
 
     print("\nTransitions:")
 
-    for source, targets in model.transitions.items():
+    for transition in model.transitions:
 
-        for target in sorted(targets):
-
-            print(
-                f"  {source} -> {target}"
-            )
-
-    # ---------------------------------------------------------
-    # VALIDATION
-    # ---------------------------------------------------------
-
-    errors = model.validate()
+        print(
+            f"  {transition.source} "
+            f"--[{transition.label}]--> "
+            f"{transition.target}"
+        )
 
     print("\nValidation:")
+
+    errors = model.validate()
 
     if errors:
 
         for error in errors:
 
-            print(
-                f"  [ERROR] {error}"
-            )
+            print(f"  [ERROR] {error}")
 
     else:
 
-        print(
-            "  [OK] Kripke model hợp lệ."
-        )
+        print("  [OK] Kripke model hợp lệ.")

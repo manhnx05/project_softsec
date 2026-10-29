@@ -2,7 +2,7 @@
 
 install:
 	python -m pip install --upgrade pip
-	python -m pip install -r requirement.txt
+	python -m pip install .
 
 test:
 	python -m pytest -q

@@ -1,6 +1,10 @@
 from pathlib import Path
 
-from src.generation.generator import CodeGenerator
+from src.generation.generator import (
+    CodeGenerator,
+    state_enum_class_name,
+    verify_generated_module,
+)
 from src.models.states import AuthState
 from src.modules.authentication import AuthenticationModule, LoginParams
 from src.modules.email_notification import (
@@ -103,18 +107,35 @@ def run_code_generation(
     generator = CodeGenerator()
     output_dir = Path("generated")
     generated_files = []
+    verification_errors: list[str] = []
 
     for name, model in (("Auth", auth_model), ("Email", email_model)):
+        state_names = [state.name for state in model.states.values()]
         function = FunctionSpec(
             name=name,
-            states=[StateSpec(name=state.name) for state in model.states.values()],
+            states=[StateSpec(name=state_name) for state_name in state_names],
         )
-        generated_files.append(
-            generator.generate_state_enum(function, str(output_dir))
+        generated_file = generator.generate_state_enum(function, str(output_dir))
+        generated_files.append(generated_file)
+
+        errors = verify_generated_module(
+            generated_file,
+            {state_enum_class_name(name): state_names},
+        )
+        verification_errors.extend(
+            f"{generated_file.name}: {error}" for error in errors
         )
 
     for generated_file in generated_files:
         print(f"Generated: {generated_file.resolve()}")
+
+    if verification_errors:
+        for error in verification_errors:
+            print(f"[FAIL] {error}")
+        print("Generated module verification: FAIL")
+    else:
+        print("Generated module verification: PASS")
+
     return generated_files
 
 

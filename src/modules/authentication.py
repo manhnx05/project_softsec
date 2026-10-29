@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import hmac
+import os
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -8,10 +9,24 @@ from datetime import UTC, datetime, timedelta
 from src.models.states import AuthState
 
 _PASSWORD_HASH_ALGORITHM = "pbkdf2_sha256"
-_PASSWORD_HASH_ITERATIONS = 600_000
-_MIN_PASSWORD_HASH_ITERATIONS = 600_000
+_DEFAULT_PASSWORD_HASH_ITERATIONS = 600_000
 _MAX_PASSWORD_HASH_ITERATIONS = 2_000_000
 _PASSWORD_SALT_BYTES = 16
+
+#: Overrides the PBKDF2 round count so long fuzzing runs can hash at a cheaper,
+#: still deterministic cost. Unset in production, where the 600k default applies.
+PASSWORD_HASH_ITERATIONS_ENV = "LMS_PASSWORD_HASH_ITERATIONS"
+
+
+def _hash_iterations() -> int:
+    raw = os.environ.get(
+        PASSWORD_HASH_ITERATIONS_ENV,
+        str(_DEFAULT_PASSWORD_HASH_ITERATIONS),
+    )
+    try:
+        return int(raw)
+    except ValueError:
+        return _DEFAULT_PASSWORD_HASH_ITERATIONS
 
 
 @dataclass
@@ -39,11 +54,12 @@ class Session:
 
 def hash_password(password: str) -> str:
     salt = secrets.token_bytes(_PASSWORD_SALT_BYTES)
+    iterations = _hash_iterations()
     digest = hashlib.pbkdf2_hmac(
         "sha256",
         password.encode("utf-8"),
         salt,
-        _PASSWORD_HASH_ITERATIONS,
+        iterations,
     )
 
     encoded_salt = base64.urlsafe_b64encode(salt).decode("ascii")
@@ -51,7 +67,7 @@ def hash_password(password: str) -> str:
 
     return (
         f"{_PASSWORD_HASH_ALGORITHM}$"
-        f"{_PASSWORD_HASH_ITERATIONS}$"
+        f"{iterations}$"
         f"{encoded_salt}$"
         f"{encoded_digest}"
     )
@@ -66,7 +82,7 @@ def verify_password(password: str, password_hash: str) -> bool:
         if (
             algorithm != _PASSWORD_HASH_ALGORITHM
             or not (
-                _MIN_PASSWORD_HASH_ITERATIONS
+                _hash_iterations()
                 <= iterations
                 <= _MAX_PASSWORD_HASH_ITERATIONS
             )

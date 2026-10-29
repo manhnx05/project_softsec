@@ -31,8 +31,10 @@ Mục tiêu chính của dự án là minh họa cách các kỹ thuật kiểm 
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -r requirement.txt
+python -m pip install .
 ```
+
+Tất cả phụ thuộc được khai báo một nơi duy nhất trong `pyproject.toml` (bao gồm cả công cụ kiểm thử và phân tích tĩnh).
 
 Các lệnh dưới đây chạy từ thư mục gốc của dự án. Nếu `.venv` đã tồn tại, chỉ cần kích hoạt lại bằng `source .venv/bin/activate`.
 
@@ -54,6 +56,8 @@ Mở URL Streamlit được in ra terminal, thường là `http://localhost:8501
 - **Dynamic Testing:** chạy pytest hoặc pytest kèm coverage.
 - **Report:** tổng hợp kết quả đã chạy trong phiên dashboard hiện tại và tải JSON.
 - **C Security Analysis:** chọn số vòng fuzz/seed rồi bấm **Run end-to-end C analysis**. Báo cáo ghi bounds, seed corpus, input-class coverage, black-box kiểm tra CLI ở biên và white-box fuzz trực tiếp có timeout để phát hiện crash/hang. Báo cáo chi tiết có thể tải JSON.
+- **Fuzzing:** dựng luồng fuzzing hoàn chỉnh (black-box CLI, white-box C, property fuzzing Python) với seed tái lập. Tab hiển thị sơ đồ luồng, bảng coverage và seed data, danh sách findings, và cho tải báo cáo HTML tự chứa/JSON/Markdown.
+- **E2E Scenarios:** liệt kê danh mục kịch bản End-to-End của LMS; bấm **Run all E2E scenarios** để thực thi tất cả và xem bằng chứng PASS/FAIL kèm tải JSON.
 
 ### Chạy từng nhóm test
 
@@ -68,6 +72,9 @@ python -m pytest tests/test_lms.py -q -k kripke
 
 # Phân tích C
 python -m pytest tests/test_c_analysis.py -q
+
+# Fuzzing pipeline và kịch bản E2E
+python -m pytest tests/test_fuzz_pipeline.py tests/test_e2e_scenarios.py -q
 
 # Toàn bộ test suite
 python main.py --test
@@ -105,6 +112,18 @@ python -c "from src.c_analysis.runner import run_c_analysis; report = run_c_anal
 
 Report JSON mặc định nằm ở `reports/c_analysis/latest_report.json`. `FINDING` trên bản vulnerable là kết quả mong đợi của demo; `UNAVAILABLE` nghĩa là công cụ tùy chọn như CBMC chưa có trong `PATH`, không được tính là `PASS`.
 
+### Chạy fuzzing pipeline và kịch bản E2E
+
+```bash
+# Fuzzing: black-box CLI, white-box C, property fuzzing Python
+python main.py --fuzz --iterations 2000 --seed 12648430
+
+# Danh mục kịch bản End-to-End của LMS
+python main.py --scenarios
+```
+
+Fuzzing ghi `reports/fuzzing/latest_report.json` cùng `fuzzing_report.json`, `fuzzing_report.md` và `fuzzing_report.html` (HTML tự chứa, sơ đồ luồng là SVG inline). Cùng một `seed` cho ra cùng corpus và cùng coverage; mỗi stage báo cáo seed data, coverage theo input class và findings. Lệnh trả exit code `1` nếu có `FINDING`/`ERROR`. `--scenarios` thực thi toàn bộ kịch bản E2E và in `PASS`/`FAIL` kèm bằng chứng.
+
 ### Xem lệnh CLI
 
 ```bash
@@ -119,6 +138,7 @@ python main.py --list
 - `src/verification/`: ràng buộc và mô hình Kripke
 - `src/specification/`: loader spec và schema
 - `src/c_analysis/`: mô hình và runner cho phân tích C
+- `src/testing/`: fuzzing (C và Python), pipeline fuzzing, và danh mục kịch bản E2E
 - `csrc/`: ví dụ C có lỗi và sửa lỗi
 - `tests/`: các bài test kiểm thử logic và analysis workflow
 - `docs/`: tài liệu mô tả, sơ đồ, báo cáo
