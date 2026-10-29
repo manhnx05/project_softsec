@@ -125,8 +125,40 @@ def test_dashboard_actions_store_section_results():
     assert "doublecircle" in kripke_result["graph"]
     assert not app.exception
 
+    app.button(key="generate_state_enums").click().run()
+    generated_state_files = app.session_state["generated_state_files"]
+    assert generated_state_files
+    assert all(Path(path).is_file() for path in generated_state_files)
+
     app.button(key="generate_safe_c_code").click().run()
     generated_safe_c = app.session_state["generated_safe_c_files"]
     assert len(generated_safe_c) == 2
     assert all(Path(path).is_file() for path in generated_safe_c)
+    assert not app.exception
+
+    app.button(key="test_generated_code").click().run(timeout=180)
+    verification = app.session_state["generated_verification"]
+    assert verification
+    assert all(
+        result["status"] in {"PASS", "UNAVAILABLE"} for result in verification
+    )
+    assert not app.exception
+
+
+def test_dashboard_runs_fuzzing_and_scenario_tabs():
+    app = AppTest.from_file("../app.py").run()
+
+    app.number_input(key="pipeline_fuzz_iterations").set_value(8).run()
+    app.number_input(key="pipeline_fuzz_seed").set_value(12345).run()
+    app.button(key="run_fuzz_pipeline").click().run(timeout=120)
+
+    fuzz_result = app.session_state["fuzz_pipeline_result"]
+    assert fuzz_result.passed
+    assert fuzz_result.summary["ERROR"] == 0
+    assert not app.exception
+
+    app.button(key="run_e2e_scenarios").click().run(timeout=60)
+    scenario_results = app.session_state["e2e_scenario_results"]
+    assert scenario_results
+    assert all(row["Result"] == "PASS" for row in scenario_results)
     assert not app.exception

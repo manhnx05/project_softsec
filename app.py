@@ -8,6 +8,11 @@ import yaml
 
 from src.constraints.z3_solver import Z3ConstraintEngine
 from src.generation.generator import CodeGenerator
+from src.generation.verification import (
+    run_generated_pytest,
+    verify_safe_c,
+    verify_state_enums,
+)
 from src.kripke.builder import build_kripke
 from src.kripke.model import KripkeModel
 from src.kripke.visualizer import create_pyvis
@@ -21,6 +26,14 @@ from src.modules.email_notification import (
 from src.specification.loader import load_project_spec
 from src.specification.schemas import FunctionSpec
 from src.testing.dynamic import run_coverage, run_pytest
+from src.testing.fuzz_pipeline import run_fuzz_pipeline
+from src.testing.fuzzing_report import (
+    build_flow_mermaid,
+    build_markdown,
+    render_flow_svg,
+    render_html,
+)
+from src.testing.scenarios import run_e2e_scenarios, scenario_catalogue
 from src.testing.static import run_mypy, run_ruff
 from src.verification.constraints import (
     AUTH_CONSTRAINTS,
@@ -367,6 +380,8 @@ tabs = st.tabs(
         "8. Dynamic Testing",
         "9. Report",
         "10. C Security Analysis",
+        "11. Fuzzing",
+        "12. E2E Scenarios",
     ]
 )
 
@@ -714,6 +729,50 @@ with tabs[5]:
             key=f"download_{Path(generated_file).name}",
         )
 
+    st.markdown("---")
+    st.subheader("Test generated code")
+    st.caption(
+        "Verify the artifacts above: import the generated enum modules and "
+        "compare their members with the specification, compile the generated "
+        "safe C code with strict warnings and run the CLI boundary cases, then "
+        "run pytest against the generated enums."
+    )
+    if st.button("Test generated code", key="test_generated_code"):
+        spec_functions = [
+            function for spec in specifications for function in spec.functions
+        ]
+        st.session_state["generated_verification"] = [
+            *verify_state_enums(spec_functions),
+            verify_safe_c(),
+            run_generated_pytest(spec_functions),
+        ]
+
+    verification_results = st.session_state.get("generated_verification")
+    if verification_results:
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "Check": result["name"],
+                        "Status": result["status"],
+                        "Summary": result["summary"],
+                    }
+                    for result in verification_results
+                ]
+            ),
+            width="stretch",
+        )
+        for result in verification_results:
+            with st.expander(
+                f"{result['name']} — {result['status']}",
+                expanded=result["status"] not in {"PASS", "UNAVAILABLE"},
+            ):
+                if result["command"]:
+                    st.code(result["command"], language="shell")
+                st.code(result["details"] or "No diagnostics.")
+    else:
+        st.info("Sinh mã trước, sau đó bấm nút để kiểm thử code vừa sinh.")
+
 with tabs[6]:
     st.header("Static Testing")
     st.caption(
@@ -1040,3 +1099,195 @@ with tabs[9]:
                 ("Fuzz", "Report", "coverage"),
             ],
         )
+
+with tabs[10]:
+    st.header("Fuzzing Pipeline")
+    st.write(
+        "Run black-box CLI boundary fuzzing, white-box deterministic C fuzzing, "
+        "and Python white-box property fuzzing with one reproducible seed. "
+        "Every stage records its seed data, coverage counters, and findings."
+    )
+    st.caption(
+        "Coverage counts input classes exercised (not source-line coverage). "
+        "The same seed reproduces the identical corpus, so results are auditable."
+    )
+
+    col1, col2 = st.columns(2)
+    with col1:
+        fuzz_iterations = st.number_input(
+            "Iterations per target",
+            min_value=1,
+            max_value=1000000,
+            value=2000,
+            step=100,
+            key="pipeline_fuzz_iterations",
+        )
+    with col2:
+        fuzz_seed = st.number_input(
+            "Reproducible seed",
+            min_value=0,
+            max_value=4294967295,
+            value=12648430,
+            step=1,
+            key="pipeline_fuzz_seed",
+        )
+
+    if st.button("Run fuzzing pipeline", key="run_fuzz_pipeline"):
+        with st.spinner("Fuzzing C CLI, C harness, and Python invariants..."):
+            st.session_state["fuzz_pipeline_result"] = run_fuzz_pipeline(
+                iterations=int(fuzz_iterations),
+                seed=int(fuzz_seed),
+            )
+
+    fuzz_result = st.session_state.get("fuzz_pipeline_result")
+    if fuzz_result:
+        fuzz_summary = fuzz_result.summary
+        verdict = "PASS" if fuzz_result.passed else "FAIL"
+        (st.success if fuzz_result.passed else st.error)(
+            f"Fuzzing pipeline: {verdict} · seed {fuzz_result.seed} · "
+            f"{fuzz_result.iterations} iterations per target"
+        )
+
+        metric_cols = st.columns(5)
+        metric_cols[0].metric("Stages", fuzz_summary["stages_total"])
+        metric_cols[1].metric("PASS", fuzz_summary["PASS"])
+        metric_cols[2].metric("FINDING", fuzz_summary["FINDING"])
+        metric_cols[3].metric("UNAVAILABLE", fuzz_summary["UNAVAILABLE"])
+        metric_cols[4].metric("ERROR", fuzz_summary["ERROR"])
+
+        st.subheader("Fuzzing flow")
+        st.markdown(render_flow_svg(fuzz_result), unsafe_allow_html=True)
+
+        st.subheader("Stage summary")
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "Stage": stage.name,
+                        "Mode": stage.mode,
+                        "Status": stage.status,
+                        "Iterations": stage.iterations,
+                        "Summary": stage.summary,
+                    }
+                    for stage in fuzz_result.stages
+                ]
+            ),
+            width="stretch",
+        )
+
+        st.subheader("Coverage by stage")
+        for fuzz_stage in fuzz_result.stages:
+            coverage_rows = [
+                {"Metric": key, "Value": str(value)}
+                for key, value in fuzz_stage.coverage.items()
+                if not isinstance(value, (list, dict))
+            ]
+            with st.expander(f"{fuzz_stage.name} ({fuzz_stage.status})"):
+                if coverage_rows:
+                    st.dataframe(pd.DataFrame(coverage_rows), width="stretch")
+                else:
+                    st.info("No coverage counters were produced for this stage.")
+
+        seed_stages = [
+            {"Stage": stage.name, "Seed data": ", ".join(map(str, stage.seed_data))}
+            for stage in fuzz_result.stages
+            if stage.seed_data
+        ]
+        st.subheader("Fixed seed data (boundary inputs)")
+        if seed_stages:
+            st.dataframe(pd.DataFrame(seed_stages), width="stretch")
+        else:
+            st.info("No fixed seed inputs were recorded for this run.")
+
+        st.subheader("Findings")
+        if fuzz_result.findings:
+            for finding in fuzz_result.findings:
+                st.warning(finding)
+        else:
+            st.success("No crash, hang, or boundary deviation was reported.")
+
+        with st.expander("Mermaid flow source"):
+            st.code(build_flow_mermaid(fuzz_result), language="text")
+
+        st.subheader("Exports")
+        st.caption(f"Artifacts written to: {Path(fuzz_result.report_path).parent}")
+        download_cols = st.columns(3)
+        download_cols[0].download_button(
+            "Download HTML report",
+            data=render_html(fuzz_result),
+            file_name="fuzzing_report.html",
+            mime="text/html",
+            key="download_fuzz_html",
+        )
+        download_cols[1].download_button(
+            "Download JSON report",
+            data=json.dumps(fuzz_result.to_dict(), indent=2, ensure_ascii=False),
+            file_name="fuzzing_report.json",
+            mime="application/json",
+            key="download_fuzz_json",
+        )
+        download_cols[2].download_button(
+            "Download Markdown report",
+            data=build_markdown(fuzz_result),
+            file_name="fuzzing_report.md",
+            mime="text/markdown",
+            key="download_fuzz_markdown",
+        )
+    else:
+        st.info(
+            "Chưa chạy fuzzing pipeline. Bấm nút để chạy và xem luồng, coverage, seed data và findings."
+        )
+
+with tabs[11]:
+    st.header("LMS End-to-End Scenarios")
+    st.write(
+        "Declarative catalogue of the LMS end-to-end security scenarios. The same "
+        "list backs the pytest suite, so the documented scenarios and the executed "
+        "checks cannot drift apart."
+    )
+
+    catalogue = scenario_catalogue()
+    st.subheader("Scenario catalogue")
+    st.caption(
+        f"{len(catalogue)} declared scenarios across "
+        + ", ".join(sorted({row["Function"] for row in catalogue}))
+        + "."
+    )
+    st.dataframe(pd.DataFrame(catalogue), width="stretch")
+
+    if st.button("Run all E2E scenarios", key="run_e2e_scenarios"):
+        with st.spinner("Executing LMS end-to-end scenarios..."):
+            st.session_state["e2e_scenario_results"] = run_e2e_scenarios()
+
+    scenario_results = st.session_state.get("e2e_scenario_results")
+    if scenario_results:
+        passed_rows = [row for row in scenario_results if row["Result"] == "PASS"]
+        failed_rows = [row for row in scenario_results if row["Result"] != "PASS"]
+        if failed_rows:
+            st.error(
+                f"{len(passed_rows)}/{len(scenario_results)} scenarios passed "
+                f"({len(failed_rows)} failed)."
+            )
+        else:
+            st.success(f"All {len(scenario_results)} scenarios passed.")
+
+        st.dataframe(
+            pd.DataFrame(scenario_results),
+            width="stretch",
+            column_config={
+                "Result": st.column_config.TextColumn("Result"),
+            },
+        )
+        if failed_rows:
+            st.subheader("Failures")
+            for row in failed_rows:
+                st.warning(f"{row['ID']} — {row['Scenario']}: {row['Evidence']}")
+
+        st.download_button(
+            "Download scenario results (JSON)",
+            data=json.dumps(scenario_results, indent=2, ensure_ascii=False),
+            file_name="lms_e2e_scenarios.json",
+            mime="application/json",
+        )
+    else:
+        st.info("Chưa chạy scenarios. Bấm nút để thực thi danh mục E2E và xem bằng chứng PASS/FAIL.")

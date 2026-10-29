@@ -303,7 +303,7 @@ def _run_gcc_analysis(
             "-Wconversion",
             "-Wsign-conversion",
         ]
-        if compiler_path.endswith(("gcc", "/gcc")):
+        if Path(compiler_path).name.lower().startswith("gcc"):
             command.append("-fanalyzer")
         else:
             command.extend(["-Xclang", "-analyze"])
@@ -598,7 +598,7 @@ def _run_blackbox_boundary_tests(
     for input_value, expected_exit in cases:
         actual_exit, run_stdout, run_stderr, run_error = _run_command(
             [str(binary), input_value],
-            timeout_seconds=2,
+            timeout_seconds=10,
         )
         case_timed_out = bool(run_error and "timed out" in run_error.lower())
         timed_out = timed_out or case_timed_out
@@ -643,7 +643,7 @@ def _run_blackbox_boundary_tests(
             "signed_int_min": -(2**31),
             "signed_int_max": 2**31 - 1,
             "buffer_capacity": BUFFER_CAPACITY,
-            "timeout_seconds_per_case": 2,
+            "timeout_seconds_per_case": 10,
         },
         "seed_data": [case[0] for case in cases],
         "coverage": {

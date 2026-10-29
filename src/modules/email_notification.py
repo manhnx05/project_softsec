@@ -192,22 +192,23 @@ class EmailNotificationModule:
 
             # Gửi thất bại
 
-            notification.retry_count += 1
-
-            # Vượt quá retry cho phép
-
             if (
                 notification.retry_count
-                > self.params.max_retry
+                < self.params.max_retry
             ):
 
-                notification.state = EmailState.FAILED
+                # Còn lượt retry: tăng bộ đếm và cho phép thử lại
+
+                notification.retry_count += 1
+
+                notification.state = EmailState.QUEUED
 
             else:
 
-                # Cho phép retry
+                # Hết lượt retry: chuyển sang FAILED
+                # (retry_count luôn <= max_retry)
 
-                notification.state = EmailState.QUEUED
+                notification.state = EmailState.FAILED
 
             return False
 

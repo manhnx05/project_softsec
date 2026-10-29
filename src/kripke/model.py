@@ -56,3 +56,39 @@ class KripkeModel:
                 guard=guard,
             )
         )
+
+    def successors(self, name: str) -> set[str]:
+        """Return the set of states reachable from ``name`` in one step."""
+        return {
+            transition.target
+            for transition in self.transitions
+            if transition.source == name
+        }
+
+    def validate(self) -> list[str]:
+        """Return structural errors; an empty list means the model is valid."""
+        errors: list[str] = []
+
+        if not self.states:
+            errors.append("The model has no states.")
+
+        if self.initial_state is None:
+            errors.append("The model has no initial state.")
+        elif self.initial_state not in self.states:
+            errors.append(
+                f"Initial state '{self.initial_state}' is not a declared state."
+            )
+
+        for transition in self.transitions:
+            if transition.source not in self.states:
+                errors.append(
+                    f"Transition source '{transition.source}' is not a "
+                    "declared state."
+                )
+            if transition.target not in self.states:
+                errors.append(
+                    f"Transition target '{transition.target}' is not a "
+                    "declared state."
+                )
+
+        return errors
