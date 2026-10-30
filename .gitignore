@@ -20,6 +20,8 @@ htmlcov/
 reports_*.html
 reports/c_analysis/
 reports/fuzzing/
+reports/cbmc/
+reports/logs/
 generated/
 *.exe
 *.o
